@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "PhaseusUI/PhaseusPresetBar.h"
 
 class PHASEUSDelayAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                                private juce::Timer,
@@ -38,12 +39,15 @@ private:
 
     PHASEUSDelayAudioProcessor& audioProcessor;
     bool syncUpdateInProgress = false;
-    bool darkModeEnabled = true;
     int lastUiMode = -1;
     bool lastSimpleSyncState = false;
     bool lastPingSyncState = false;
     bool lastPingLinkTimeState = false;
     bool lastPingLinkFeedbackState = false;
+    bool lastLoFiState = false;
+    bool lastReverseState = false;
+    bool lastDuckingState = false;
+    bool lastDiffusionState = false;
     bool syncTimeUpdateInProgress = false;
     int rightPanelScrollOffset = 0;
     int rightPanelContentHeight = 0;
@@ -53,8 +57,33 @@ private:
     juce::TextButton pingTab { "PingPong" };
     juce::TextButton grainTab { "Grain" };
 
-    juce::ToggleButton darkModeToggle;
+    juce::Slider outputGainSlider;
+    juce::Label outputGainLabel;
     juce::ToggleButton loFiToggle;
+    juce::Image backgroundImage;
+    juce::Image chainImage;
+    std::unique_ptr<phaseus::PresetBar> presetBar;
+    juce::Slider loFiAmountSlider;
+    juce::Label loFiAmountLabel;
+    juce::ToggleButton reverseToggle;
+    juce::Slider reverseMixSlider;
+    juce::Slider reverseStartSlider;
+    juce::Slider reverseEndSlider;
+    juce::Label reverseMixLabel;
+    juce::Label reverseStartLabel;
+    juce::Label reverseEndLabel;
+    juce::ToggleButton duckingToggle;
+    juce::Slider duckingAmountSlider;
+    juce::Slider duckingAttackSlider;
+    juce::Slider duckingReleaseSlider;
+    juce::Label duckingAmountLabel;
+    juce::Label duckingAttackLabel;
+    juce::Label duckingReleaseLabel;
+    juce::ToggleButton diffusionToggle;
+    juce::Slider diffusionAmountSlider;
+    juce::Slider diffusionSizeSlider;
+    juce::Label diffusionAmountLabel;
+    juce::Label diffusionSizeLabel;
     juce::ScrollBar rightPanelScrollBar { false };
 
     juce::Slider wetDrySlider;
@@ -155,7 +184,20 @@ private:
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
     std::unique_ptr<SliderAttachment> wetDryAttachment;
+    std::unique_ptr<SliderAttachment> outputGainAttachment;
     std::unique_ptr<ButtonAttachment> loFiAttachment;
+    std::unique_ptr<SliderAttachment> loFiAmountAttachment;
+    std::unique_ptr<ButtonAttachment> reverseEnableAttachment;
+    std::unique_ptr<SliderAttachment> reverseMixAttachment;
+    std::unique_ptr<SliderAttachment> reverseStartAttachment;
+    std::unique_ptr<SliderAttachment> reverseEndAttachment;
+    std::unique_ptr<ButtonAttachment> duckingEnableAttachment;
+    std::unique_ptr<SliderAttachment> duckingAmountAttachment;
+    std::unique_ptr<SliderAttachment> duckingAttackAttachment;
+    std::unique_ptr<SliderAttachment> duckingReleaseAttachment;
+    std::unique_ptr<ButtonAttachment> diffusionEnableAttachment;
+    std::unique_ptr<SliderAttachment> diffusionAmountAttachment;
+    std::unique_ptr<SliderAttachment> diffusionSizeAttachment;
 
     std::unique_ptr<SliderAttachment> simpleTimeAttachment;
     std::unique_ptr<SliderAttachment> simpleFeedbackAttachment;

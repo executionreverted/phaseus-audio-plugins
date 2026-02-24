@@ -6,7 +6,20 @@ namespace PhaseusDelayParams
 {
 inline constexpr const char* mode = "mode";
 inline constexpr const char* wetDry = "wetDry";
+inline constexpr const char* outputGainDb = "outputGainDb";
 inline constexpr const char* loFiMode = "loFiMode";
+inline constexpr const char* loFiAmount = "loFiAmount";
+inline constexpr const char* reverseEnable = "reverseEnable";
+inline constexpr const char* reverseMix = "reverseMix";
+inline constexpr const char* reverseStartOffsetMs = "reverseStartOffsetMs";
+inline constexpr const char* reverseEndOffsetMs = "reverseEndOffsetMs";
+inline constexpr const char* duckingEnable = "duckingEnable";
+inline constexpr const char* duckingAmount = "duckingAmount";
+inline constexpr const char* duckingAttackMs = "duckingAttackMs";
+inline constexpr const char* duckingReleaseMs = "duckingReleaseMs";
+inline constexpr const char* diffusionEnable = "diffusionEnable";
+inline constexpr const char* diffusionAmount = "diffusionAmount";
+inline constexpr const char* diffusionSizeMs = "diffusionSizeMs";
 
 inline constexpr const char* simpleTimeMs = "simpleTimeMs";
 inline constexpr const char* simpleFeedback = "simpleFeedback";
@@ -90,6 +103,7 @@ private:
     static constexpr double maxDelaySeconds = 4.0;
 
     juce::AudioBuffer<float> delayBuffer;
+    juce::AudioBuffer<float> reverseBuffer;
     int writePosition = 0;
     double currentSampleRate = 44100.0;
 
@@ -110,6 +124,10 @@ private:
     juce::IIRFilter filterR;
     juce::AudioBuffer<float> combBuffer;
     int combWritePosition = 0;
+    juce::AudioBuffer<float> diffusionBufferA;
+    juce::AudioBuffer<float> diffusionBufferB;
+    int diffusionWriteA = 0;
+    int diffusionWriteB = 0;
     int loFiDownsampleCounter = 0;
     float loFiHeldWetL = 0.0f;
     float loFiHeldWetR = 0.0f;
@@ -117,9 +135,19 @@ private:
     int simpleTimeRandomCounter = 0;
     int pingTimeLeftRandomCounter = 0;
     int pingTimeRightRandomCounter = 0;
+    int simpleFeedbackRandomCounter = 0;
+    int pingFeedbackLeftRandomCounter = 0;
+    int pingFeedbackRightRandomCounter = 0;
     float simpleHeldRandomTimeMs = 420.0f;
     float pingHeldRandomTimeLeftMs = 330.0f;
     float pingHeldRandomTimeRightMs = 500.0f;
+    float simpleHeldRandomFeedback = 0.35f;
+    float pingHeldRandomFeedbackLeft = 0.40f;
+    float pingHeldRandomFeedbackRight = 0.40f;
+    float duckEnvelope = 0.0f;
+    int reverseSamplesRemaining = 0;
+    int reverseLengthSamples = 1;
+    int reverseAnchor = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PHASEUSDelayAudioProcessor)
 };

@@ -147,4 +147,68 @@ Her plugin degisiminden sonra minimum:
 ## 10. Ek Hafiza
 
 - Proje ilerleme notlari, bug-fix kayitlari ve PHASEUS signature kararlarinin detayli kaydi:
-  - `PROJECT_MEMORY.md`
+  - `Plugins/PHASEUS_Delay/PROJECT_MEMORY.md`
+
+## 11. Son Sprintten Kritik Dersler
+
+1. Time randomizasyonu "surekli jitter" olmamali
+- Problem: `time random` her block/sample degisirse delay read point surekli oynar ve noise/pitch warble olusur.
+- Dogru yaklasim: random degeri bir echo dongusu boyunca "held" tut, sadece periyot sonunda yenile.
+
+2. Sync modda time knob kaybolmamali
+- Problem: Sync acilinca kullanici time knob ile muziksel kontrol hissini kaybediyor.
+- Dogru yaklasim: Sync acikken knob gorunur kalir, text `1/4, 1/8T...` olur, knob division'i surer.
+
+3. Sag panel overflow'u sadece responsive layout ile cozulmez
+- Problem: Ozellikle grain/filter ek kontrollerinde dikey tasma olur.
+- Dogru yaklasim: Gercek scrollbar + wheel scroll + kompakt spacing.
+
+4. Filter UI'de cok knob, hizli UX'i bozar
+- Problem: 5-6 mini knob "prototip" hissi verir.
+- Dogru yaklasim: type tabs + response graph + horizontal sliderlar; Comb ekstra kontrolleri kosullu acilir.
+
+5. Stereo pan davranisi sabit-guc olmali
+- Problem: Basit linear pan enerji dengesini bozar, ani ses degisimi yaratir.
+- Dogru yaklasim: constant-power pan (`sqrt` tabanli L/R gain).
+
+## 12. Guncel PHASEUS Durumu (2026-02)
+
+- Header:
+  - Sol: `Phaseus Dayi Delay`
+  - Orta: reusable preset bar (`Init`, preset list, `Save`, `Init`)
+  - Sag: `Output Gain` (`-24..+24 dB`, default `0 dB`) + `LoFi` toggle
+- Tema:
+  - Full dark only (dark/light toggle kaldirildi)
+  - Background image + dark overlay
+  - Square buttons (radius 0) standardi
+- Preset:
+  - Save dialog dark-themed ve centered spawn
+  - Secili preset property APVTS state icinde tutuluyor
+  - Eski presetlerde yeni parametre yoksa default deger kullanilir (crash olmadan)
+
+## 13. Yeni DSP Ozellikleri (Kalin Hafiza)
+
+- Reverse:
+  - Reverse artik dry/input degil wet history'den okunuyor
+  - `Reverse Start Offset` + `Reverse End Offset` aktif
+  - `start + end` reverse penceresini clamp'li sekilde daraltir
+- Diffusion:
+  - Wet path'e 2-stage allpass diffusion eklendi
+  - Parametreler:
+    - `Diffusion Enable`
+    - `Diffusion Amount`
+    - `Diffusion Size (ms)`
+- Output stage:
+  - Final outputa global `Output Gain` uygulanir
+
+## 14. Reusable UI Kurallari (Diger Pluginler Icin)
+
+- Preset bar:
+  - `Shared/PhaseusUI/PhaseusPresetBar` kullan
+  - Header ortasina yerlestir
+- Button styling:
+  - `TextButton` ve preset action button'larda square style (radius 0)
+- Right panel:
+  - Overflow olasiligi varsa scrollbar default acik tasarla
+- Mod bazli layout:
+  - Ana knoblar kaybolmayacak sekilde state gecisleri yap

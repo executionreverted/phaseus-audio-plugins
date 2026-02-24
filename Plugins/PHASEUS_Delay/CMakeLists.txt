@@ -1,5 +1,11 @@
 set(TARGET_NAME PHASEUS_Delay)
 
+juce_add_binary_data(${TARGET_NAME}_Assets
+    SOURCES
+        ${CMAKE_SOURCE_DIR}/assets/dayidelay.jpg
+        ${CMAKE_SOURCE_DIR}/assets/chain.png
+)
+
 juce_add_plugin(${TARGET_NAME}
     COMPANY_NAME "VSTLibrary"
     IS_SYNTH FALSE
@@ -23,6 +29,13 @@ target_sources(${TARGET_NAME}
         Source/PluginProcessor.h
         Source/PluginEditor.cpp
         Source/PluginEditor.h
+        ${CMAKE_SOURCE_DIR}/Shared/PhaseusUI/PhaseusPresetBar.cpp
+        ${CMAKE_SOURCE_DIR}/Shared/PhaseusUI/PhaseusPresetBar.h
+)
+
+target_include_directories(${TARGET_NAME}
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/Shared
 )
 
 target_compile_definitions(${TARGET_NAME}
@@ -35,6 +48,7 @@ target_compile_definitions(${TARGET_NAME}
 target_link_libraries(${TARGET_NAME}
     PRIVATE
         juce::juce_audio_utils
+        ${TARGET_NAME}_Assets
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
