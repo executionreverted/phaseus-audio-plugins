@@ -1,0 +1,13 @@
+# Build output
+build/
+cmake-build-*/
+
+# Local JUCE clone (kept external to repo history)
+JUCE/
+
+# macOS
+.DS_Store
+
+# IDE/editor
+.idea/
+.vscode/

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+    echo "Usage: ./build_and_copy <PluginName>"
+    echo "Example: ./build_and_copy PHASEUS_Delay"
+    exit 1
+fi
+
+plugin_name="$1"
+target_name="${plugin_name}_CopyVST3"
+
+if [[ ! -f "CMakeLists.txt" ]]; then
+    echo "Error: Run this script from project root."
+    exit 1
+fi
+
+cmake -S . -B build
+cmake --build build --config Release --target "${target_name}"
+
+echo
+echo "Done. Copied (if build succeeded):"
+echo "$HOME/Library/Audio/Plug-Ins/VST3/${plugin_name}.vst3"

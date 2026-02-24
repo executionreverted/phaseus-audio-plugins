@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+    echo "Usage: ./createplugin <PluginName>"
+    echo "Example: ./createplugin Reverb2"
+    exit 1
+fi
+
+plugin_name="$1"
+
+if [[ ! "$plugin_name" =~ ^[A-Za-z][A-Za-z0-9_]*$ ]]; then
+    echo "Error: PluginName must match ^[A-Za-z][A-Za-z0-9_]*$"
+    exit 1
+fi
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+template_dir="${script_dir}/Templates/DefaultPluginTemplate"
+plugins_dir="${script_dir}/Plugins"
+plugin_dir="${plugins_dir}/${plugin_name}"
+
+if [[ ! -d "$template_dir" ]]; then
+    echo "Error: Template not found at ${template_dir}"
+    exit 1
+fi
+
+if [[ -e "$plugin_dir" ]]; then
+    echo "Error: ${plugin_dir} already exists"
+    exit 1
+fi
+
+plugin_class="$(echo "$plugin_name" | awk -F '_' '{for(i=1;i<=NF;i++){part=$i; printf toupper(substr(part,1,1)) substr(part,2);}}')"
+plugin_code="$(echo "$plugin_name" | tr -cd '[:alnum:]' | tr '[:lower:]' '[:upper:]' | cut -c1-4)"
+
+while [[ ${#plugin_code} -lt 4 ]]; do
+    plugin_code="${plugin_code}X"
+done
+
+mkdir -p "$plugin_dir"
+cp -R "${template_dir}/." "$plugin_dir/"
+
+while IFS= read -r file; do
+    perl -0pi -e "s/__PLUGIN_NAME__/${plugin_name}/g; s/__PLUGIN_CLASS__/${plugin_class}/g; s/__PLUGIN_CODE__/${plugin_code}/g" "$file"
+done < <(find "$plugin_dir" -type f)
+
+echo "Created plugin: ${plugin_name}"
+echo "Path: ${plugin_dir}"
+echo "Next: cmake -S . -B build && cmake --build build --config Release"
