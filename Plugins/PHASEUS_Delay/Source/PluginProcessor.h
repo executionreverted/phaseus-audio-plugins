@@ -6,11 +6,14 @@ namespace PhaseusDelayParams
 {
 inline constexpr const char* mode = "mode";
 inline constexpr const char* wetDry = "wetDry";
+inline constexpr const char* loFiMode = "loFiMode";
 
 inline constexpr const char* simpleTimeMs = "simpleTimeMs";
 inline constexpr const char* simpleFeedback = "simpleFeedback";
 inline constexpr const char* simpleSync = "simpleSync";
 inline constexpr const char* simpleSyncDivision = "simpleSyncDivision";
+inline constexpr const char* simpleTimeRandomPct = "simpleTimeRandomPct";
+inline constexpr const char* simpleFeedbackRandomPct = "simpleFeedbackRandomPct";
 
 inline constexpr const char* pingTimeLeftMs = "pingTimeLeftMs";
 inline constexpr const char* pingTimeRightMs = "pingTimeRightMs";
@@ -21,13 +24,32 @@ inline constexpr const char* pingLinkFeedback = "pingLinkFeedback";
 inline constexpr const char* pingSync = "pingSync";
 inline constexpr const char* pingSyncDivisionLeft = "pingSyncDivisionLeft";
 inline constexpr const char* pingSyncDivisionRight = "pingSyncDivisionRight";
+inline constexpr const char* pingTimeLeftRandomPct = "pingTimeLeftRandomPct";
+inline constexpr const char* pingTimeRightRandomPct = "pingTimeRightRandomPct";
+inline constexpr const char* pingFeedbackLeftRandomPct = "pingFeedbackLeftRandomPct";
+inline constexpr const char* pingFeedbackRightRandomPct = "pingFeedbackRightRandomPct";
 
 inline constexpr const char* grainBaseTimeMs = "grainBaseTimeMs";
 inline constexpr const char* grainSizeMs = "grainSizeMs";
 inline constexpr const char* grainRateHz = "grainRateHz";
+inline constexpr const char* grainPitchSemitones = "grainPitchSemitones";
 inline constexpr const char* grainAmount = "grainAmount";
 inline constexpr const char* grainFeedback = "grainFeedback";
 inline constexpr const char* grainPingPong = "grainPingPong";
+inline constexpr const char* grainPingPongPan = "grainPingPongPan";
+inline constexpr const char* grainBaseTimeRandomPct = "grainBaseTimeRandomPct";
+inline constexpr const char* grainSizeRandomPct = "grainSizeRandomPct";
+inline constexpr const char* grainRateRandomPct = "grainRateRandomPct";
+inline constexpr const char* grainPitchRandomPct = "grainPitchRandomPct";
+inline constexpr const char* grainAmountRandomPct = "grainAmountRandomPct";
+inline constexpr const char* grainFeedbackRandomPct = "grainFeedbackRandomPct";
+
+inline constexpr const char* filterType = "filterType";
+inline constexpr const char* filterCutoffHz = "filterCutoffHz";
+inline constexpr const char* filterQ = "filterQ";
+inline constexpr const char* filterMix = "filterMix";
+inline constexpr const char* filterCombMs = "filterCombMs";
+inline constexpr const char* filterCombFeedback = "filterCombFeedback";
 }
 
 class PHASEUSDelayAudioProcessor final : public juce::AudioProcessor
@@ -75,10 +97,29 @@ private:
     int grainSamplesLeft = 0;
     int grainCurrentLengthSamples = 1;
     int currentGrainDelaySamples = 1;
+    float currentGrainReadPosition = 0.0f;
+    float currentGrainPitchRatio = 1.0f;
+    float currentGrainFeedback = 0.35f;
+    float currentGrainAmount = 0.5f;
     bool grainPanToRight = false;
     float grainWetSmoothedL = 0.0f;
     float grainWetSmoothedR = 0.0f;
     juce::Random random;
+
+    juce::IIRFilter filterL;
+    juce::IIRFilter filterR;
+    juce::AudioBuffer<float> combBuffer;
+    int combWritePosition = 0;
+    int loFiDownsampleCounter = 0;
+    float loFiHeldWetL = 0.0f;
+    float loFiHeldWetR = 0.0f;
+
+    int simpleTimeRandomCounter = 0;
+    int pingTimeLeftRandomCounter = 0;
+    int pingTimeRightRandomCounter = 0;
+    float simpleHeldRandomTimeMs = 420.0f;
+    float pingHeldRandomTimeLeftMs = 330.0f;
+    float pingHeldRandomTimeRightMs = 500.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PHASEUSDelayAudioProcessor)
 };

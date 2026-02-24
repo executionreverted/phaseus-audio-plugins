@@ -10,9 +10,36 @@ float clamp01(const float value)
     return juce::jlimit(0.0f, 1.0f, value);
 }
 
+float clampPct(const float value)
+{
+    return juce::jlimit(0.0f, 100.0f, value);
+}
+
+float quantizeToBitDepth(const float value, const int bits)
+{
+    const auto levels = static_cast<float>((1 << juce::jmax(1, bits)) - 1);
+    const auto mapped = juce::jlimit(-1.0f, 1.0f, value) * 0.5f + 0.5f;
+    const auto quantized = std::round(mapped * levels) / levels;
+    return quantized * 2.0f - 1.0f;
+}
+
 int msToSamples(const float ms, const double sampleRate, const int maxSamples)
 {
     return juce::jlimit(1, maxSamples - 1, static_cast<int>(ms * 0.001 * sampleRate));
+}
+
+float applyPercentRandom(const float baseValue, const float randomPct, juce::Random& random)
+{
+    const auto spread = std::abs(baseValue) * clampPct(randomPct) * 0.01f;
+    if (spread <= 0.0f)
+        return baseValue;
+
+    return baseValue + random.nextFloat() * spread * 2.0f - spread;
+}
+
+float semitoneToRatio(const float semitones)
+{
+    return std::pow(2.0f, semitones / 12.0f);
 }
 
 float divisionToQuarterNotes(const int divisionIndex)
@@ -62,9 +89,28 @@ void PHASEUSDelayAudioProcessor::prepareToPlay(const double sampleRate, const in
     grainSamplesLeft = 0;
     grainCurrentLengthSamples = 1;
     currentGrainDelaySamples = juce::jmax(1, static_cast<int>(0.2 * sampleRate));
+    currentGrainReadPosition = 0.0f;
+    currentGrainPitchRatio = 1.0f;
+    currentGrainFeedback = 0.35f;
+    currentGrainAmount = 0.5f;
     grainPanToRight = false;
     grainWetSmoothedL = 0.0f;
     grainWetSmoothedR = 0.0f;
+
+    filterL.reset();
+    filterR.reset();
+    combBuffer.setSize(2, delayBufferSize);
+    combBuffer.clear();
+    combWritePosition = 0;
+    loFiDownsampleCounter = 0;
+    loFiHeldWetL = 0.0f;
+    loFiHeldWetR = 0.0f;
+    simpleTimeRandomCounter = 0;
+    pingTimeLeftRandomCounter = 0;
+    pingTimeRightRandomCounter = 0;
+    simpleHeldRandomTimeMs = 420.0f;
+    pingHeldRandomTimeLeftMs = 330.0f;
+    pingHeldRandomTimeRightMs = 500.0f;
 }
 
 void PHASEUSDelayAudioProcessor::releaseResources()
@@ -97,14 +143,21 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
 
     const auto mode = getCurrentModeIndex();
     const auto wetDryValue = clamp01(apvts.getRawParameterValue(PhaseusDelayParams::wetDry)->load());
+    const auto loFiEnabled = apvts.getRawParameterValue(PhaseusDelayParams::loFiMode)->load() > 0.5f;
 
     auto simpleTimeMs = apvts.getRawParameterValue(PhaseusDelayParams::simpleTimeMs)->load();
     const auto simpleFeedback = juce::jlimit(0.0f, 0.97f, apvts.getRawParameterValue(PhaseusDelayParams::simpleFeedback)->load());
+    const auto simpleTimeRandomPct = apvts.getRawParameterValue(PhaseusDelayParams::simpleTimeRandomPct)->load();
+    const auto simpleFeedbackRandomPct = apvts.getRawParameterValue(PhaseusDelayParams::simpleFeedbackRandomPct)->load();
 
     auto pingTimeLeftMs = apvts.getRawParameterValue(PhaseusDelayParams::pingTimeLeftMs)->load();
     auto pingTimeRightMs = apvts.getRawParameterValue(PhaseusDelayParams::pingTimeRightMs)->load();
     auto pingFeedbackLeft = juce::jlimit(0.0f, 0.97f, apvts.getRawParameterValue(PhaseusDelayParams::pingFeedbackLeft)->load());
     auto pingFeedbackRight = juce::jlimit(0.0f, 0.97f, apvts.getRawParameterValue(PhaseusDelayParams::pingFeedbackRight)->load());
+    const auto pingTimeLeftRandomPct = apvts.getRawParameterValue(PhaseusDelayParams::pingTimeLeftRandomPct)->load();
+    const auto pingTimeRightRandomPct = apvts.getRawParameterValue(PhaseusDelayParams::pingTimeRightRandomPct)->load();
+    const auto pingFeedbackLeftRandomPct = apvts.getRawParameterValue(PhaseusDelayParams::pingFeedbackLeftRandomPct)->load();
+    const auto pingFeedbackRightRandomPct = apvts.getRawParameterValue(PhaseusDelayParams::pingFeedbackRightRandomPct)->load();
 
     const auto pingLinkTimes = apvts.getRawParameterValue(PhaseusDelayParams::pingLinkTimes)->load() > 0.5f;
     const auto pingLinkFeedback = apvts.getRawParameterValue(PhaseusDelayParams::pingLinkFeedback)->load() > 0.5f;
@@ -141,28 +194,75 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
         pingTimeRightMs = bpmSyncedMs(bpm, pingSyncDivisionRight, pingTimeRightMs);
     }
 
+    simpleTimeMs = juce::jmax(1.0f, simpleTimeMs);
+    auto simpleFeedbackBlock = juce::jlimit(0.0f, 0.97f, applyPercentRandom(simpleFeedback, simpleFeedbackRandomPct, random));
+
+    pingTimeLeftMs = juce::jmax(1.0f, pingTimeLeftMs);
+    pingTimeRightMs = juce::jmax(1.0f, pingTimeRightMs);
+
+    if (pingLinkFeedback)
+    {
+        pingFeedbackLeft = juce::jlimit(0.0f, 0.97f, applyPercentRandom(pingFeedbackLeft, pingFeedbackLeftRandomPct, random));
+        pingFeedbackRight = pingFeedbackLeft;
+    }
+    else
+    {
+        pingFeedbackLeft = juce::jlimit(0.0f, 0.97f, applyPercentRandom(pingFeedbackLeft, pingFeedbackLeftRandomPct, random));
+        pingFeedbackRight = juce::jlimit(0.0f, 0.97f, applyPercentRandom(pingFeedbackRight, pingFeedbackRightRandomPct, random));
+    }
+
     const auto grainBaseTimeMs = apvts.getRawParameterValue(PhaseusDelayParams::grainBaseTimeMs)->load();
     const auto grainSizeMs = apvts.getRawParameterValue(PhaseusDelayParams::grainSizeMs)->load();
     const auto grainRateHz = juce::jmax(0.1f, apvts.getRawParameterValue(PhaseusDelayParams::grainRateHz)->load());
+    const auto grainPitchSemitones = apvts.getRawParameterValue(PhaseusDelayParams::grainPitchSemitones)->load();
     const auto grainAmount = clamp01(apvts.getRawParameterValue(PhaseusDelayParams::grainAmount)->load());
     const auto grainFeedback = juce::jlimit(0.0f, 0.97f, apvts.getRawParameterValue(PhaseusDelayParams::grainFeedback)->load());
     const auto grainPingPong = apvts.getRawParameterValue(PhaseusDelayParams::grainPingPong)->load() > 0.5f;
+    const auto grainPingPongPan = clamp01(apvts.getRawParameterValue(PhaseusDelayParams::grainPingPongPan)->load());
+    const auto grainBaseTimeRandomPct = apvts.getRawParameterValue(PhaseusDelayParams::grainBaseTimeRandomPct)->load();
+    const auto grainSizeRandomPct = apvts.getRawParameterValue(PhaseusDelayParams::grainSizeRandomPct)->load();
+    const auto grainRateRandomPct = apvts.getRawParameterValue(PhaseusDelayParams::grainRateRandomPct)->load();
+    const auto grainPitchRandomPct = apvts.getRawParameterValue(PhaseusDelayParams::grainPitchRandomPct)->load();
+    const auto grainAmountRandomPct = apvts.getRawParameterValue(PhaseusDelayParams::grainAmountRandomPct)->load();
+    const auto grainFeedbackRandomPct = apvts.getRawParameterValue(PhaseusDelayParams::grainFeedbackRandomPct)->load();
+
+    const auto filterType = static_cast<int>(apvts.getRawParameterValue(PhaseusDelayParams::filterType)->load());
+    const auto filterCutoffHz = apvts.getRawParameterValue(PhaseusDelayParams::filterCutoffHz)->load();
+    const auto filterQ = apvts.getRawParameterValue(PhaseusDelayParams::filterQ)->load();
+    const auto filterMix = clamp01(apvts.getRawParameterValue(PhaseusDelayParams::filterMix)->load());
+    const auto filterCombMs = apvts.getRawParameterValue(PhaseusDelayParams::filterCombMs)->load();
+    const auto filterCombFeedback = juce::jlimit(0.0f, 0.97f, apvts.getRawParameterValue(PhaseusDelayParams::filterCombFeedback)->load());
 
     auto* left = buffer.getWritePointer(0);
     auto* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : nullptr;
 
     auto* delayLeft = delayBuffer.getWritePointer(0);
     auto* delayRight = delayBuffer.getWritePointer(1);
+    auto* combLeft = combBuffer.getWritePointer(0);
+    auto* combRight = combBuffer.getWritePointer(1);
 
     const auto delayBufferSize = delayBuffer.getNumSamples();
-    const auto simpleDelaySamples = msToSamples(simpleTimeMs, currentSampleRate, delayBufferSize);
-    const auto pingDelayLeftSamples = msToSamples(pingTimeLeftMs, currentSampleRate, delayBufferSize);
-    const auto pingDelayRightSamples = msToSamples(pingTimeRightMs, currentSampleRate, delayBufferSize);
+    const auto baseSimpleDelaySamples = msToSamples(simpleTimeMs, currentSampleRate, delayBufferSize);
+    const auto basePingDelayLeftSamples = msToSamples(pingTimeLeftMs, currentSampleRate, delayBufferSize);
+    const auto basePingDelayRightSamples = msToSamples(pingTimeRightMs, currentSampleRate, delayBufferSize);
 
-    const auto grainBaseDelaySamples = msToSamples(grainBaseTimeMs, currentSampleRate, delayBufferSize);
-    const auto grainSizeSamples = juce::jmax(1, msToSamples(grainSizeMs, currentSampleRate, delayBufferSize));
-    const auto grainIntervalSamples = juce::jmax(1, static_cast<int>(currentSampleRate / grainRateHz));
-    const auto grainGapSamples = juce::jmax(0, grainIntervalSamples - grainSizeSamples);
+    const auto combDelaySamples = msToSamples(filterCombMs, currentSampleRate, combBuffer.getNumSamples());
+
+    if (filterType == 1)
+    {
+        filterL.setCoefficients(juce::IIRCoefficients::makeLowPass(currentSampleRate, filterCutoffHz, filterQ));
+        filterR.setCoefficients(juce::IIRCoefficients::makeLowPass(currentSampleRate, filterCutoffHz, filterQ));
+    }
+    else if (filterType == 2)
+    {
+        filterL.setCoefficients(juce::IIRCoefficients::makeHighPass(currentSampleRate, filterCutoffHz, filterQ));
+        filterR.setCoefficients(juce::IIRCoefficients::makeHighPass(currentSampleRate, filterCutoffHz, filterQ));
+    }
+    else if (filterType == 3)
+    {
+        filterL.setCoefficients(juce::IIRCoefficients::makeNotchFilter(currentSampleRate, filterCutoffHz, filterQ));
+        filterR.setCoefficients(juce::IIRCoefficients::makeNotchFilter(currentSampleRate, filterCutoffHz, filterQ));
+    }
 
     for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
     {
@@ -184,24 +284,99 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
             return channel == 0 ? delayLeft[readPosition] : delayRight[readPosition];
         };
 
+        auto readMonoInterpolated = [&](float readPosition) -> float
+        {
+            while (readPosition < 0.0f)
+                readPosition += static_cast<float>(delayBufferSize);
+
+            while (readPosition >= static_cast<float>(delayBufferSize))
+                readPosition -= static_cast<float>(delayBufferSize);
+
+            const auto indexA = static_cast<int>(readPosition);
+            const auto indexB = (indexA + 1) % delayBufferSize;
+            const auto frac = readPosition - static_cast<float>(indexA);
+
+            const auto monoA = 0.5f * (delayLeft[indexA] + delayRight[indexA]);
+            const auto monoB = 0.5f * (delayLeft[indexB] + delayRight[indexB]);
+            return monoA + (monoB - monoA) * frac;
+        };
+
+        auto currentSimpleDelaySamples = baseSimpleDelaySamples;
+        auto currentPingDelayLeftSamples = basePingDelayLeftSamples;
+        auto currentPingDelayRightSamples = basePingDelayRightSamples;
+
         if (mode == 0)
         {
-            const auto delayedL = readDelayed(0, simpleDelaySamples);
-            const auto delayedR = readDelayed(1, simpleDelaySamples);
+            if (simpleTimeRandomPct > 0.0f)
+            {
+                if (simpleTimeRandomCounter <= 0)
+                {
+                    simpleHeldRandomTimeMs = juce::jmax(1.0f, applyPercentRandom(simpleTimeMs, simpleTimeRandomPct, random));
+                    simpleTimeRandomCounter = msToSamples(simpleHeldRandomTimeMs, currentSampleRate, delayBufferSize);
+                }
+                --simpleTimeRandomCounter;
+                currentSimpleDelaySamples = msToSamples(simpleHeldRandomTimeMs, currentSampleRate, delayBufferSize);
+            }
+            else
+            {
+                simpleHeldRandomTimeMs = simpleTimeMs;
+                simpleTimeRandomCounter = baseSimpleDelaySamples;
+            }
+
+            const auto delayedL = readDelayed(0, currentSimpleDelaySamples);
+            const auto delayedR = readDelayed(1, currentSimpleDelaySamples);
 
             wetL = delayedL;
             wetR = delayedR;
 
-            writeL = inL + delayedL * simpleFeedback;
-            writeR = inR + delayedR * simpleFeedback;
+            writeL = inL + delayedL * simpleFeedbackBlock;
+            writeR = inR + delayedR * simpleFeedbackBlock;
 
             grainWetSmoothedL = wetL;
             grainWetSmoothedR = wetR;
         }
         else if (mode == 1)
         {
-            const auto delayedL = readDelayed(0, pingDelayLeftSamples);
-            const auto delayedR = readDelayed(1, pingDelayRightSamples);
+            if (pingTimeLeftRandomPct > 0.0f)
+            {
+                if (pingTimeLeftRandomCounter <= 0)
+                {
+                    pingHeldRandomTimeLeftMs = juce::jmax(1.0f, applyPercentRandom(pingTimeLeftMs, pingTimeLeftRandomPct, random));
+                    pingTimeLeftRandomCounter = msToSamples(pingHeldRandomTimeLeftMs, currentSampleRate, delayBufferSize);
+                }
+                --pingTimeLeftRandomCounter;
+                currentPingDelayLeftSamples = msToSamples(pingHeldRandomTimeLeftMs, currentSampleRate, delayBufferSize);
+            }
+            else
+            {
+                pingHeldRandomTimeLeftMs = pingTimeLeftMs;
+                pingTimeLeftRandomCounter = basePingDelayLeftSamples;
+            }
+
+            if (pingLinkTimes)
+            {
+                pingHeldRandomTimeRightMs = pingHeldRandomTimeLeftMs;
+                pingTimeRightRandomCounter = pingTimeLeftRandomCounter;
+                currentPingDelayRightSamples = currentPingDelayLeftSamples;
+            }
+            else if (pingTimeRightRandomPct > 0.0f)
+            {
+                if (pingTimeRightRandomCounter <= 0)
+                {
+                    pingHeldRandomTimeRightMs = juce::jmax(1.0f, applyPercentRandom(pingTimeRightMs, pingTimeRightRandomPct, random));
+                    pingTimeRightRandomCounter = msToSamples(pingHeldRandomTimeRightMs, currentSampleRate, delayBufferSize);
+                }
+                --pingTimeRightRandomCounter;
+                currentPingDelayRightSamples = msToSamples(pingHeldRandomTimeRightMs, currentSampleRate, delayBufferSize);
+            }
+            else
+            {
+                pingHeldRandomTimeRightMs = pingTimeRightMs;
+                pingTimeRightRandomCounter = basePingDelayRightSamples;
+            }
+
+            const auto delayedL = readDelayed(0, currentPingDelayLeftSamples);
+            const auto delayedR = readDelayed(1, currentPingDelayRightSamples);
 
             wetL = delayedL;
             wetR = delayedR;
@@ -221,13 +396,26 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
             {
                 grainPanToRight = !grainPanToRight;
 
-                const auto spread = static_cast<int>(grainAmount * static_cast<float>(grainBaseDelaySamples) * 0.8f);
-                const auto randomOffset = spread > 0 ? random.nextInt(spread * 2 + 1) - spread : 0;
+                const auto randomBaseMs = juce::jmax(1.0f, applyPercentRandom(grainBaseTimeMs, grainBaseTimeRandomPct, random));
+                const auto randomSizeMs = juce::jmax(1.0f, applyPercentRandom(grainSizeMs, grainSizeRandomPct, random));
+                const auto randomRateHz = juce::jmax(0.1f, applyPercentRandom(grainRateHz, grainRateRandomPct, random));
+                const auto randomPitchSemitones = juce::jlimit(-24.0f, 24.0f, applyPercentRandom(grainPitchSemitones, grainPitchRandomPct, random));
+                const auto randomAmount = clamp01(applyPercentRandom(grainAmount, grainAmountRandomPct, random));
+                const auto randomFeedback = juce::jlimit(0.0f, 0.97f, applyPercentRandom(grainFeedback, grainFeedbackRandomPct, random));
 
-                currentGrainDelaySamples = juce::jlimit(1, delayBufferSize - 1, grainBaseDelaySamples + randomOffset);
-                grainCurrentLengthSamples = grainSizeSamples;
+                currentGrainDelaySamples = msToSamples(randomBaseMs, currentSampleRate, delayBufferSize);
+                grainCurrentLengthSamples = juce::jmax(1, msToSamples(randomSizeMs, currentSampleRate, delayBufferSize));
                 grainSamplesLeft = grainCurrentLengthSamples;
-                grainSamplesUntilNext = grainGapSamples;
+
+                const auto intervalSamples = juce::jmax(1, static_cast<int>(currentSampleRate / randomRateHz));
+                grainSamplesUntilNext = juce::jmax(0, intervalSamples - grainCurrentLengthSamples);
+                currentGrainAmount = randomAmount;
+                currentGrainFeedback = randomFeedback;
+                currentGrainPitchRatio = semitoneToRatio(randomPitchSemitones);
+
+                currentGrainReadPosition = static_cast<float>(writePosition - currentGrainDelaySamples);
+                while (currentGrainReadPosition < 0.0f)
+                    currentGrainReadPosition += static_cast<float>(delayBufferSize);
             }
 
             auto delayedMono = 0.0f;
@@ -235,26 +423,23 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
 
             if (grainSamplesLeft > 0)
             {
-                delayedMono = 0.5f * (readDelayed(0, currentGrainDelaySamples) + readDelayed(1, currentGrainDelaySamples));
+                delayedMono = readMonoInterpolated(currentGrainReadPosition);
                 const auto envelope = grainWindow(grainSamplesLeft, grainCurrentLengthSamples);
-                grainWetMono = delayedMono * envelope;
+                grainWetMono = delayedMono * envelope * currentGrainAmount;
                 --grainSamplesLeft;
+
+                currentGrainReadPosition += currentGrainPitchRatio;
+                if (currentGrainReadPosition >= static_cast<float>(delayBufferSize))
+                    currentGrainReadPosition -= static_cast<float>(delayBufferSize);
             }
 
             if (grainPingPong)
             {
-                const auto oppositeGain = 1.0f - grainAmount;
-
-                if (grainPanToRight)
-                {
-                    wetL = grainWetMono * oppositeGain;
-                    wetR = grainWetMono;
-                }
-                else
-                {
-                    wetL = grainWetMono;
-                    wetR = grainWetMono * oppositeGain;
-                }
+                const auto pan = grainPanToRight ? grainPingPongPan : -grainPingPongPan;
+                const auto gainL = std::sqrt(0.5f * (1.0f - pan));
+                const auto gainR = std::sqrt(0.5f * (1.0f + pan));
+                wetL = grainWetMono * gainL;
+                wetR = grainWetMono * gainR;
             }
             else
             {
@@ -269,21 +454,71 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
             wetR = grainWetSmoothedR;
 
             const auto monoIn = 0.5f * (inL + inR);
-            const auto monoWrite = juce::jlimit(-2.0f, 2.0f, monoIn + delayedMono * grainFeedback);
+            const auto monoWrite = juce::jlimit(-2.0f, 2.0f, monoIn + delayedMono * currentGrainFeedback);
             writeL = monoWrite;
             writeR = monoWrite;
         }
 
-        left[sample] = inL * (1.0f - wetDryValue) + wetL * wetDryValue;
+        auto wetProcL = wetL;
+        auto wetProcR = wetR;
+
+        if (loFiEnabled)
+        {
+            const auto downsampleFactor = juce::jmax(1, static_cast<int>(std::round(currentSampleRate / 12000.0)));
+            constexpr int loFiBits = 8;
+
+            if (loFiDownsampleCounter <= 0)
+            {
+                loFiHeldWetL = quantizeToBitDepth(wetProcL, loFiBits);
+                loFiHeldWetR = quantizeToBitDepth(wetProcR, loFiBits);
+                loFiDownsampleCounter = downsampleFactor;
+            }
+
+            wetProcL = loFiHeldWetL;
+            wetProcR = loFiHeldWetR;
+            --loFiDownsampleCounter;
+        }
+
+        auto outL = inL * (1.0f - wetDryValue) + wetProcL * wetDryValue;
+        auto outR = inR * (1.0f - wetDryValue) + wetProcR * wetDryValue;
+
+        if (filterType == 1 || filterType == 2 || filterType == 3)
+        {
+            const auto fL = filterL.processSingleSampleRaw(outL);
+            const auto fR = filterR.processSingleSampleRaw(outR);
+            outL = outL * (1.0f - filterMix) + fL * filterMix;
+            outR = outR * (1.0f - filterMix) + fR * filterMix;
+        }
+        else if (filterType == 4)
+        {
+            auto combRead = combWritePosition - combDelaySamples;
+            while (combRead < 0)
+                combRead += combBuffer.getNumSamples();
+
+            const auto delayedL = combLeft[combRead];
+            const auto delayedR = combRight[combRead];
+            combLeft[combWritePosition] = outL + delayedL * filterCombFeedback;
+            combRight[combWritePosition] = outR + delayedR * filterCombFeedback;
+
+            const auto combL = outL + delayedL * 0.7f;
+            const auto combR = outR + delayedR * 0.7f;
+            outL = outL * (1.0f - filterMix) + combL * filterMix;
+            outR = outR * (1.0f - filterMix) + combR * filterMix;
+        }
+
+        left[sample] = outL;
 
         if (right != nullptr)
-            right[sample] = inR * (1.0f - wetDryValue) + wetR * wetDryValue;
+            right[sample] = outR;
 
         delayLeft[writePosition] = writeL;
         delayRight[writePosition] = writeR;
 
         if (++writePosition >= delayBufferSize)
             writePosition = 0;
+
+        if (++combWritePosition >= combBuffer.getNumSamples())
+            combWritePosition = 0;
     }
 }
 
@@ -378,9 +613,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout PHASEUSDelayAudioProcessor::
         0));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::wetDry, "Wet/Dry", 0.0f, 1.0f, 0.35f));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(PhaseusDelayParams::loFiMode, "LoFi Mode", false));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::simpleTimeMs, "Simple Time", 1.0f, 2000.0f, 420.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::simpleFeedback, "Simple Feedback", 0.0f, 0.97f, 0.35f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::simpleTimeRandomPct, "Simple Time Random", 0.0f, 100.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::simpleFeedbackRandomPct, "Simple Feedback Random", 0.0f, 100.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterBool>(PhaseusDelayParams::simpleSync, "Simple Sync", true));
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         PhaseusDelayParams::simpleSyncDivision,
@@ -392,6 +630,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout PHASEUSDelayAudioProcessor::
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::pingTimeRightMs, "Ping Time Right", 1.0f, 2000.0f, 500.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::pingFeedbackLeft, "Ping Feedback Left", 0.0f, 0.97f, 0.40f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::pingFeedbackRight, "Ping Feedback Right", 0.0f, 0.97f, 0.40f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::pingTimeLeftRandomPct, "Ping Time Left Random", 0.0f, 100.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::pingTimeRightRandomPct, "Ping Time Right Random", 0.0f, 100.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::pingFeedbackLeftRandomPct, "Ping Feedback Left Random", 0.0f, 100.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::pingFeedbackRightRandomPct, "Ping Feedback Right Random", 0.0f, 100.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterBool>(PhaseusDelayParams::pingLinkTimes, "Sync Left/Right Time", true));
     params.push_back(std::make_unique<juce::AudioParameterBool>(PhaseusDelayParams::pingLinkFeedback, "Sync Left/Right Feedback", true));
     params.push_back(std::make_unique<juce::AudioParameterBool>(PhaseusDelayParams::pingSync, "Ping Sync", true));
@@ -409,9 +651,32 @@ juce::AudioProcessorValueTreeState::ParameterLayout PHASEUSDelayAudioProcessor::
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::grainBaseTimeMs, "Grain Base Time", 1.0f, 1200.0f, 300.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::grainSizeMs, "Grain Size", 5.0f, 250.0f, 60.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::grainRateHz, "Grain Rate", 0.25f, 24.0f, 6.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::grainPitchSemitones, "Grain Pitch", -24.0f, 24.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::grainAmount, "Grain Amount", 0.0f, 1.0f, 0.55f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::grainFeedback, "Grain Feedback", 0.0f, 0.97f, 0.35f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::grainBaseTimeRandomPct, "Grain Base Time Random", 0.0f, 100.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::grainSizeRandomPct, "Grain Size Random", 0.0f, 100.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::grainRateRandomPct, "Grain Rate Random", 0.0f, 100.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::grainPitchRandomPct, "Grain Pitch Random", 0.0f, 100.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::grainAmountRandomPct, "Grain Amount Random", 0.0f, 100.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::grainFeedbackRandomPct, "Grain Feedback Random", 0.0f, 100.0f, 0.0f));
     params.push_back(std::make_unique<juce::AudioParameterBool>(PhaseusDelayParams::grainPingPong, "Grain PingPong", true));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::grainPingPongPan, "Grain PingPong Pan", 0.0f, 1.0f, 0.8f));
+
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(
+        PhaseusDelayParams::filterType,
+        "Filter Type",
+        juce::StringArray { "Off", "LowPass", "HighPass", "Notch", "Comb" },
+        0));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        PhaseusDelayParams::filterCutoffHz,
+        "Filter Cutoff",
+        juce::NormalisableRange<float>(20.0f, 20000.0f, 0.01f, 0.3f),
+        1800.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filterQ, "Filter Q", 0.1f, 10.0f, 0.8f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filterMix, "Filter Mix", 0.0f, 1.0f, 0.35f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filterCombMs, "Filter Comb Time", 1.0f, 60.0f, 12.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filterCombFeedback, "Filter Comb Feedback", 0.0f, 0.97f, 0.45f));
 
     return { params.begin(), params.end() };
 }
