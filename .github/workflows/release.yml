@@ -1,0 +1,84 @@
+name: Build and Release VST3
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS VST3
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build PHASEUS_Delay VST3
+        run: cmake --build build --config Release --target PHASEUS_Delay_VST3
+
+      - name: Package macOS VST3
+        run: |
+          VST3_PATH="build/Plugins/PHASEUS_Delay/PHASEUS_Delay_artefacts/VST3/PHASEUS_Delay.vst3"
+          ZIP_NAME="PHASEUS_Delay-${{ github.ref_name }}-macOS.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$VST3_PATH" "$ZIP_NAME"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phaseus-delay-macos
+          path: ${{ env.ZIP_NAME }}
+
+  build-windows:
+    name: Build Windows VST3
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build PHASEUS_Delay VST3
+        run: cmake --build build --config Release --target PHASEUS_Delay_VST3
+
+      - name: Package Windows VST3
+        shell: pwsh
+        run: |
+          $vst3Path = "build/Plugins/PHASEUS_Delay/PHASEUS_Delay_artefacts/VST3/PHASEUS_Delay.vst3"
+          $zipName = "PHASEUS_Delay-${{ github.ref_name }}-Windows.zip"
+          Compress-Archive -Path $vst3Path -DestinationPath $zipName -Force
+          "ZIP_NAME=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phaseus-delay-windows
+          path: ${{ env.ZIP_NAME }}
+
+  create-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-macos, build-windows]
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Create release with assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/*.zip
+          generate_release_notes: true
