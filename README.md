@@ -5,6 +5,8 @@ Custom VST development repository for my own artist tools and sound design workf
 Artist: **PHΛSEUS Ω**  
 SoundCloud: [https://soundcloud.com/iamphaseus](https://soundcloud.com/iamphaseus)
 
+![PHASEUS Dayi Delay](assets/dayidelay-screenshot.jpg)
+
 ## About
 
 This is a JUCE-based plugin monorepo:
