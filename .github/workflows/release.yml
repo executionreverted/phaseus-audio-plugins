@@ -33,7 +33,12 @@ jobs:
 
       - name: Package macOS VST3
         run: |
-          VST3_PATH="build/Plugins/PHASEUS_Delay/PHASEUS_Delay_artefacts/VST3/PHASEUS_Delay.vst3"
+          VST3_PATH="$(find build -type d -name 'PHASEUS_Delay.vst3' | head -n 1)"
+          if [ -z "$VST3_PATH" ]; then
+            echo "PHASEUS_Delay.vst3 not found under build/"
+            find build -maxdepth 8 -type d | sed -n '1,200p'
+            exit 1
+          fi
           ZIP_NAME="PHASEUS_Delay-${{ github.ref_name }}-macOS.zip"
           ditto -c -k --sequesterRsrc --keepParent "$VST3_PATH" "$ZIP_NAME"
           echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
@@ -68,7 +73,12 @@ jobs:
       - name: Package Windows VST3
         shell: pwsh
         run: |
-          $vst3Path = "build/Plugins/PHASEUS_Delay/PHASEUS_Delay_artefacts/VST3/PHASEUS_Delay.vst3"
+          $vst3Path = Get-ChildItem -Path "build" -Recurse -Directory -Filter "PHASEUS_Delay.vst3" | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $vst3Path) {
+            Write-Error "PHASEUS_Delay.vst3 not found under build/"
+            Get-ChildItem -Path "build" -Recurse -Directory | Select-Object -First 200 | ForEach-Object { $_.FullName }
+            exit 1
+          }
           $zipName = "PHASEUS_Delay-${{ github.ref_name }}-Windows.zip"
           Compress-Archive -Path $vst3Path -DestinationPath $zipName -Force
           "ZIP_NAME=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Append
