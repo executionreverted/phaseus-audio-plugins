@@ -63,6 +63,17 @@ inline constexpr const char* filterQ = "filterQ";
 inline constexpr const char* filterMix = "filterMix";
 inline constexpr const char* filterCombMs = "filterCombMs";
 inline constexpr const char* filterCombFeedback = "filterCombFeedback";
+inline constexpr const char* filter1Enable = "filter1Enable";
+inline constexpr const char* filter2Enable = "filter2Enable";
+inline constexpr const char* filter1Input = "filter1Input";
+inline constexpr const char* filter2Input = "filter2Input";
+inline constexpr const char* filter1Route = "filter1Route";
+inline constexpr const char* filter2Type = "filter2Type";
+inline constexpr const char* filter2CutoffHz = "filter2CutoffHz";
+inline constexpr const char* filter2Q = "filter2Q";
+inline constexpr const char* filter2Mix = "filter2Mix";
+inline constexpr const char* filter2CombMs = "filter2CombMs";
+inline constexpr const char* filter2CombFeedback = "filter2CombFeedback";
 }
 
 class PHASEUSDelayAudioProcessor final : public juce::AudioProcessor
@@ -122,8 +133,12 @@ private:
 
     juce::IIRFilter filterL;
     juce::IIRFilter filterR;
+    juce::IIRFilter filter2L;
+    juce::IIRFilter filter2R;
     juce::AudioBuffer<float> combBuffer;
+    juce::AudioBuffer<float> combBuffer2;
     int combWritePosition = 0;
+    int combWritePosition2 = 0;
     juce::AudioBuffer<float> diffusionBufferA;
     juce::AudioBuffer<float> diffusionBufferB;
     int diffusionWriteA = 0;

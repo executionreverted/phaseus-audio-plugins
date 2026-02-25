@@ -25,6 +25,8 @@ private:
     void setupSyncTimeTextFunctions();
     void updateSyncTimeKnobState();
     void pushSyncDivisionFromKnob(juce::Slider& knob, juce::ComboBox& divisionBox);
+    void bindFilterSlotAttachments(int slotIndex);
+    void setActiveFilterSlot(int slotIndex);
 
     void applyTheme();
     void updateModeVisibility();
@@ -49,6 +51,7 @@ private:
     bool lastDuckingState = false;
     bool lastDiffusionState = false;
     bool syncTimeUpdateInProgress = false;
+    int activeFilterSlot = 1;
     int rightPanelScrollOffset = 0;
     int rightPanelContentHeight = 0;
     juce::Rectangle<int> rightPanelViewportBounds;
@@ -121,6 +124,13 @@ private:
     juce::TextButton filterHpTab { "HP" };
     juce::TextButton filterNotchTab { "Notch" };
     juce::TextButton filterCombTab { "Comb" };
+    juce::TextButton filterSlot1Tab { "Filter 1" };
+    juce::TextButton filterSlot2Tab { "Filter 2" };
+    juce::ToggleButton filterEnableToggle;
+    juce::ComboBox filterInputBox;
+    juce::ComboBox filterRouteBox;
+    juce::Label filterInputLabel;
+    juce::Label filterRouteLabel;
     std::unique_ptr<FilterResponseView> filterResponseView;
     juce::ComboBox filterTypeBox;
     juce::Label filterTypeLabel;
@@ -237,6 +247,9 @@ private:
     std::unique_ptr<ButtonAttachment> grainPingPongAttachment;
     std::unique_ptr<SliderAttachment> grainPingPongPanAttachment;
     std::unique_ptr<ComboBoxAttachment> filterTypeAttachment;
+    std::unique_ptr<ButtonAttachment> filterEnableAttachment;
+    std::unique_ptr<ComboBoxAttachment> filterInputAttachment;
+    std::unique_ptr<ComboBoxAttachment> filterRouteAttachment;
     std::unique_ptr<SliderAttachment> filterCutoffAttachment;
     std::unique_ptr<SliderAttachment> filterQAttachment;
     std::unique_ptr<SliderAttachment> filterMixAttachment;

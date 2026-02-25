@@ -212,3 +212,32 @@ Her plugin degisiminden sonra minimum:
   - Overflow olasiligi varsa scrollbar default acik tasarla
 - Mod bazli layout:
   - Ana knoblar kaybolmayacak sekilde state gecisleri yap
+
+## 15. Son Iterasyon Ozeti (2026-02, Layout + Routing)
+
+- Delay panel yerlesimi:
+  - Sol ust: delay controls
+  - Sol alt: sabit filter panel
+  - Sag panel: global controls
+- Random knob yerlesimi:
+  - Tum random parametrelerde random knob ana knobun saginda.
+  - Alt alta random layout kaldirildi.
+- Knob sizing:
+  - Autoscale tamamen kaldirildi.
+  - Sabit ve okunakli standart boyut kullaniliyor.
+- Filter routing (hard rule):
+  - `Filter 1` input daima wet delay sinyali
+  - `Filter 2` enabled ise `F1 -> F2 -> Out`
+  - `Filter 2` disabled ise `F1 -> Out`
+- PingPong chain icon visibility:
+  - Link toggle kapaliysa zincir ikonu gorunmez.
+
+## 16. CI ve Tek Plugin Build Notu
+
+- Monorepo oldugu icin tum pluginleri build etmek zorunlu degil.
+- Lokal derlemede hedef vererek sadece tek plugin alinabilir:
+  - `cmake --build build --config Release --target PHASEUS_Delay_VST3`
+- GitHub Actions release akisinda da ayni yaklasim kullanilabilir:
+  - `workflow_dispatch` input (`plugin_name`) eklenir
+  - target dinamik secilir: `${plugin_name}_VST3`
+  - sadece secili plugin ziplenip release'e eklenir.

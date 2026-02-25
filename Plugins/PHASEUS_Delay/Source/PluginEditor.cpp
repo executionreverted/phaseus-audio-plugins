@@ -325,6 +325,20 @@ PHASEUSDelayAudioProcessorEditor::PHASEUSDelayAudioProcessorEditor(PHASEUSDelayA
     grainPingPongPanSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     grainPingPongPanSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 66, 18);
     setupLabel(grainPingPongPanLabel, "PingPong Pan");
+    filterSlot1Tab.setClickingTogglesState(false);
+    filterSlot2Tab.setClickingTogglesState(false);
+    filterSlot1Tab.setLookAndFeel(&squareButtonLookAndFeel());
+    filterSlot2Tab.setLookAndFeel(&squareButtonLookAndFeel());
+    addAndMakeVisible(filterSlot1Tab);
+    addAndMakeVisible(filterSlot2Tab);
+    setupToggle(filterEnableToggle, "Enabled");
+    filterInputBox.addItemList({ "Dry", "Wet", "Filter1" }, 1);
+    addAndMakeVisible(filterInputBox);
+    filterRouteBox.addItemList({ "Out", "Filter2" }, 1);
+    addAndMakeVisible(filterRouteBox);
+    setupLabel(filterInputLabel, "Input");
+    setupLabel(filterRouteLabel, "Route");
+
     filterTypeBox.addItemList({ "Off", "LowPass", "HighPass", "Notch", "Comb" }, 1);
     filterTypeBox.setSelectedItemIndex(0, juce::dontSendNotification);
     addAndMakeVisible(filterTypeBox);
@@ -454,18 +468,15 @@ PHASEUSDelayAudioProcessorEditor::PHASEUSDelayAudioProcessorEditor(PHASEUSDelayA
 
     grainPingPongAttachment = std::make_unique<ButtonAttachment>(audioProcessor.apvts, PhaseusDelayParams::grainPingPong, grainPingPongToggle);
     grainPingPongPanAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::grainPingPongPan, grainPingPongPanSlider);
-    filterTypeAttachment = std::make_unique<ComboBoxAttachment>(audioProcessor.apvts, PhaseusDelayParams::filterType, filterTypeBox);
-    filterCutoffAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filterCutoffHz, filterCutoffSlider);
-    filterQAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filterQ, filterQSlider);
-    filterMixAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filterMix, filterMixSlider);
-    filterCombMsAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filterCombMs, filterCombMsSlider);
-    filterCombFeedbackAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filterCombFeedback, filterCombFeedbackSlider);
+    bindFilterSlotAttachments(1);
 
     filterOffTab.onClick = [this] { setFilterTypeFromTab(0); };
     filterLpTab.onClick = [this] { setFilterTypeFromTab(1); };
     filterHpTab.onClick = [this] { setFilterTypeFromTab(2); };
     filterNotchTab.onClick = [this] { setFilterTypeFromTab(3); };
     filterCombTab.onClick = [this] { setFilterTypeFromTab(4); };
+    filterSlot1Tab.onClick = [this] { setActiveFilterSlot(1); };
+    filterSlot2Tab.onClick = [this] { setActiveFilterSlot(2); };
 
     filterTypeBox.onChange = [this]
     {
@@ -660,12 +671,17 @@ void PHASEUSDelayAudioProcessorEditor::resized()
     const auto currentMaxScroll = juce::jmax(0, rightPanelContentHeight - rightPanelViewportBounds.getHeight());
     rightPanelScrollOffset = juce::jlimit(0, currentMaxScroll, rightPanelScrollOffset);
     auto leftPanel = content.reduced(10, 8);
+    const int filterPanelH = juce::jlimit(190, 250, leftPanel.getHeight() / 3);
+    auto filterPanel = leftPanel.removeFromBottom(filterPanelH).reduced(4, 4);
+    auto leftTopPanel = leftPanel;
+    const auto currentMode = audioProcessor.getCurrentModeIndex();
+    constexpr int labelH = 16;
+    constexpr int textH = 18;
+    constexpr int wetKnob = 63; // header hero knob
 
-    constexpr int mainKnob = 90;
-    constexpr int miniKnob = 56;
-    constexpr int labelH = 18;
-    constexpr int textH = 20;
-    constexpr int wetKnob = 63; // 30% smaller than mainKnob
+    // Fixed standard sizes (autoscale removed).
+    constexpr int mainKnob = 82;
+    constexpr int miniKnob = 44;
 
     auto placeMain = [&](juce::Label& label, juce::Slider& slider, const juce::Rectangle<int>& area)
     {
@@ -681,49 +697,69 @@ void PHASEUSDelayAudioProcessorEditor::resized()
 
     auto layoutSimpleLeft = [&]()
     {
-        auto row = leftPanel.removeFromTop(mainKnob + textH + labelH + miniKnob + textH + labelH + 20);
-        const int colW = juce::jmax(mainKnob + 10, row.getWidth() / 2);
+        const int mainBlockH = labelH + mainKnob + textH;
+        const int miniBlockH = labelH + miniKnob + textH;
+        const int pairBlockH = juce::jmax(mainBlockH, miniBlockH);
+        auto row = leftTopPanel.removeFromTop(pairBlockH + 18);
+        const int colW = juce::jmax(mainKnob + miniKnob + 24, row.getWidth() / 2);
         auto leftCol = row.removeFromLeft(colW).reduced(12, 0);
         auto rightCol = row.removeFromLeft(colW).reduced(12, 0);
 
-        placeMain(simpleTimeLabel, simpleTimeSlider, { leftCol.getX(), leftCol.getY(), leftCol.getWidth(), mainKnob + textH + labelH });
-        placeMain(simpleFeedbackLabel, simpleFeedbackSlider, { rightCol.getX(), rightCol.getY(), rightCol.getWidth(), mainKnob + textH + labelH });
+        auto placePair = [&](juce::Label& mainLabel, juce::Slider& mainSlider, juce::Label& randLabel, juce::Slider& randSlider, juce::Rectangle<int> col)
+        {
+            const int gap = 10;
+            const int totalW = mainKnob + gap + miniKnob;
+            const int startX = col.getX() + juce::jmax(0, (col.getWidth() - totalW) / 2);
+            const int y = col.getY();
 
-        placeMini(simpleTimeRandomLabel, simpleTimeRandomSlider, { leftCol.getX(), leftCol.getY() + mainKnob + textH + labelH + 6, leftCol.getWidth(), miniKnob + textH + labelH });
-        placeMini(simpleFeedbackRandomLabel, simpleFeedbackRandomSlider, { rightCol.getX(), rightCol.getY() + mainKnob + textH + labelH + 6, rightCol.getWidth(), miniKnob + textH + labelH });
+            placeMain(mainLabel, mainSlider, { startX, y, mainKnob, mainBlockH });
+            placeMini(randLabel, randSlider, { startX + mainKnob + gap, y, miniKnob, miniBlockH });
+        };
+
+        placePair(simpleTimeLabel, simpleTimeSlider, simpleTimeRandomLabel, simpleTimeRandomSlider, leftCol);
+        placePair(simpleFeedbackLabel, simpleFeedbackSlider, simpleFeedbackRandomLabel, simpleFeedbackRandomSlider, rightCol);
     };
 
     auto layoutPingLeft = [&]()
     {
-        const int blockH = mainKnob + textH + labelH + miniKnob + textH + labelH + 14;
-        auto topRow = leftPanel.removeFromTop(blockH);
-        auto bottomRow = leftPanel.removeFromTop(blockH);
-        const int colW = juce::jmax(mainKnob + 14, leftPanel.getWidth() / 2);
+        const int mainBlockH = labelH + mainKnob + textH;
+        const int miniBlockH = labelH + miniKnob + textH;
+        const int blockH = juce::jmax(mainBlockH, miniBlockH) + 14;
+        auto topRow = leftTopPanel.removeFromTop(blockH);
+        auto bottomRow = leftTopPanel.removeFromTop(blockH);
+        const int colW = juce::jmax(mainKnob + miniKnob + 24, leftTopPanel.getWidth() / 2);
+
+        auto placePair = [&](juce::Label& mainLabel, juce::Slider& mainSlider, juce::Label& randLabel, juce::Slider& randSlider, juce::Rectangle<int> col)
+        {
+            const int gap = 10;
+            const int totalW = mainKnob + gap + miniKnob;
+            const int startX = col.getX() + juce::jmax(0, (col.getWidth() - totalW) / 2);
+            const int y = col.getY();
+
+            placeMain(mainLabel, mainSlider, { startX, y, mainKnob, mainBlockH });
+            placeMini(randLabel, randSlider, { startX + mainKnob + gap, y, miniKnob, miniBlockH });
+        };
 
         auto tl = topRow.removeFromLeft(colW).reduced(12, 0);
         auto tr = topRow.removeFromLeft(colW).reduced(12, 0);
-        placeMain(pingTimeLeftLabel, pingTimeLeftSlider, { tl.getX(), tl.getY(), tl.getWidth(), mainKnob + textH + labelH });
-        placeMain(pingTimeRightLabel, pingTimeRightSlider, { tr.getX(), tr.getY(), tr.getWidth(), mainKnob + textH + labelH });
-        placeMini(pingTimeLeftRandomLabel, pingTimeLeftRandomSlider, { tl.getX(), tl.getY() + mainKnob + textH + labelH + 6, tl.getWidth(), miniKnob + textH + labelH });
-        placeMini(pingTimeRightRandomLabel, pingTimeRightRandomSlider, { tr.getX(), tr.getY() + mainKnob + textH + labelH + 6, tr.getWidth(), miniKnob + textH + labelH });
+        placePair(pingTimeLeftLabel, pingTimeLeftSlider, pingTimeLeftRandomLabel, pingTimeLeftRandomSlider, tl);
+        placePair(pingTimeRightLabel, pingTimeRightSlider, pingTimeRightRandomLabel, pingTimeRightRandomSlider, tr);
         pingTimeLinkLabel.setBounds((tl.getRight() + tr.getX()) / 2 - 10, tl.getY() + labelH + 28, 20, 20);
 
         auto bl = bottomRow.removeFromLeft(colW).reduced(12, 0);
         auto br = bottomRow.removeFromLeft(colW).reduced(12, 0);
-        placeMain(pingFeedbackLeftLabel, pingFeedbackLeftSlider, { bl.getX(), bl.getY(), bl.getWidth(), mainKnob + textH + labelH });
-        placeMain(pingFeedbackRightLabel, pingFeedbackRightSlider, { br.getX(), br.getY(), br.getWidth(), mainKnob + textH + labelH });
-        placeMini(pingFeedbackLeftRandomLabel, pingFeedbackLeftRandomSlider, { bl.getX(), bl.getY() + mainKnob + textH + labelH + 6, bl.getWidth(), miniKnob + textH + labelH });
-        placeMini(pingFeedbackRightRandomLabel, pingFeedbackRightRandomSlider, { br.getX(), br.getY() + mainKnob + textH + labelH + 6, br.getWidth(), miniKnob + textH + labelH });
+        placePair(pingFeedbackLeftLabel, pingFeedbackLeftSlider, pingFeedbackLeftRandomLabel, pingFeedbackLeftRandomSlider, bl);
+        placePair(pingFeedbackRightLabel, pingFeedbackRightSlider, pingFeedbackRightRandomLabel, pingFeedbackRightRandomSlider, br);
         pingFeedbackLinkLabel.setBounds((bl.getRight() + br.getX()) / 2 - 10, bl.getY() + labelH + 28, 20, 20);
     };
 
     auto layoutGrainLeft = [&]()
     {
-        auto area = leftPanel;
+        auto area = leftTopPanel;
         constexpr int cols = 3;
         constexpr int rows = 2;
         const int colW = juce::jmax(mainKnob + 24, area.getWidth() / cols);
-        const int rowH = juce::jmax(mainKnob + miniKnob + labelH * 2 + textH * 2 + 18, area.getHeight() / rows);
+        const int rowH = juce::jmax(1, area.getHeight() / rows);
 
         auto placeGrainCell = [&](int index, juce::Label& mainLabel, juce::Slider& mainSlider, juce::Label& randLabel, juce::Slider& randSlider)
         {
@@ -731,11 +767,13 @@ void PHASEUSDelayAudioProcessorEditor::resized()
             const int row = index / cols;
             auto cell = juce::Rectangle<int>(area.getX() + col * colW, area.getY() + row * rowH, colW, rowH).reduced(8, 2);
 
-            const int mainX = cell.getX() + (cell.getWidth() - mainKnob) / 2;
-            const int miniX = cell.getX() + (cell.getWidth() - miniKnob) / 2;
+            const int gap = 8;
+            const int totalW = mainKnob + gap + miniKnob;
+            const int mainX = cell.getX() + juce::jmax(0, (cell.getWidth() - totalW) / 2);
+            const int miniX = mainX + mainKnob + gap;
 
-            placeMain(mainLabel, mainSlider, { mainX, cell.getY(), mainKnob, mainKnob + textH + labelH });
-            placeMini(randLabel, randSlider, { miniX, cell.getY() + labelH + mainKnob + textH + 6, miniKnob, miniKnob + textH + labelH });
+            placeMain(mainLabel, mainSlider, { mainX, cell.getY(), mainKnob, labelH + mainKnob + textH });
+            placeMini(randLabel, randSlider, { miniX, cell.getY(), miniKnob, labelH + miniKnob + textH });
         };
 
         placeGrainCell(0, grainBaseTimeLabel, grainBaseTimeSlider, grainBaseTimeRandomLabel, grainBaseTimeRandomSlider);
@@ -808,17 +846,25 @@ void PHASEUSDelayAudioProcessorEditor::resized()
         }
     };
 
-    auto layoutFilterRight = [&](int& y)
+    auto layoutFilterLeft = [&]()
     {
-        const int x = rightPanelViewportBounds.getX();
-        const int w = rightPanelViewportBounds.getWidth();
-
-        y += 6;
+        const int x = filterPanel.getX();
+        const int w = filterPanel.getWidth();
+        int y = filterPanel.getY();
         filterTypeLabel.setBounds(x, y, w, labelH);
         y += labelH;
-        auto tabRow = juce::Rectangle<int>(x, y, w, 24);
+        auto slotRow = juce::Rectangle<int>(x, y, w, 24);
+        y += 26;
+        const int slotW = juce::jmax(72, (slotRow.getWidth() - 6) / 2);
+        filterSlot1Tab.setBounds(slotRow.removeFromLeft(slotW));
+        slotRow.removeFromLeft(6);
+        filterSlot2Tab.setBounds(slotRow.removeFromLeft(slotW));
+        filterEnableToggle.setBounds(x, y, 112, 22);
         y += 24;
-        const int filterTabW = juce::jmax(42, (tabRow.getWidth() - 8) / 5);
+
+        auto tabRow = juce::Rectangle<int>(x, y, w, 22);
+        y += 22;
+        const int filterTabW = juce::jmax(40, (tabRow.getWidth() - 8) / 5);
         filterOffTab.setBounds(tabRow.removeFromLeft(filterTabW));
         tabRow.removeFromLeft(2);
         filterLpTab.setBounds(tabRow.removeFromLeft(filterTabW));
@@ -829,37 +875,37 @@ void PHASEUSDelayAudioProcessorEditor::resized()
         tabRow.removeFromLeft(2);
         filterCombTab.setBounds(tabRow.removeFromLeft(filterTabW));
 
-        y += 4;
-        filterResponseView->setBounds(x, y, w, 96);
-        y += 102;
+        y += 2;
+        filterResponseView->setBounds(x, y, w, 62);
+        y += 66;
 
         if (filterCutoffSlider.isVisible())
         {
             auto rowCutoff = juce::Rectangle<int>(x, y, w, 20);
-            y += 20;
+            y += 18;
             filterCutoffLabel.setBounds(rowCutoff.removeFromLeft(52));
             filterCutoffSlider.setBounds(rowCutoff);
 
-            auto rowQ = juce::Rectangle<int>(x, y, w, 20);
-            y += 20;
+            auto rowQ = juce::Rectangle<int>(x, y, w, 18);
+            y += 18;
             filterQLabel.setBounds(rowQ.removeFromLeft(52));
             filterQSlider.setBounds(rowQ);
         }
 
-        auto rowMix = juce::Rectangle<int>(x, y, w, 20);
-        y += 20;
+        auto rowMix = juce::Rectangle<int>(x, y, w, 18);
+        y += 18;
         filterMixLabel.setBounds(rowMix.removeFromLeft(52));
         filterMixSlider.setBounds(rowMix);
 
         if (filterCombMsSlider.isVisible())
         {
-            auto rowCombMs = juce::Rectangle<int>(x, y, w, 20);
-            y += 20;
+            auto rowCombMs = juce::Rectangle<int>(x, y, w, 18);
+            y += 18;
             filterCombMsLabel.setBounds(rowCombMs.removeFromLeft(80));
             filterCombMsSlider.setBounds(rowCombMs);
 
-            auto rowCombFb = juce::Rectangle<int>(x, y, w, 20);
-            y += 20;
+            auto rowCombFb = juce::Rectangle<int>(x, y, w, 18);
+            y += 18;
             filterCombFeedbackLabel.setBounds(rowCombFb.removeFromLeft(80));
             filterCombFeedbackSlider.setBounds(rowCombFb);
         }
@@ -937,13 +983,12 @@ void PHASEUSDelayAudioProcessorEditor::resized()
         rightY += 24;
     }
 
-    const auto mode = audioProcessor.getCurrentModeIndex();
-    if (mode == simpleMode)
+    if (currentMode == simpleMode)
     {
         layoutSimpleLeft();
         layoutSimpleRight(rightY);
     }
-    else if (mode == pingMode)
+    else if (currentMode == pingMode)
     {
         layoutPingLeft();
         layoutPingRight(rightY);
@@ -954,7 +999,7 @@ void PHASEUSDelayAudioProcessorEditor::resized()
         layoutGrainRight(rightY);
     }
 
-    layoutFilterRight(rightY);
+    layoutFilterLeft();
 
     rightPanelContentHeight = rightY - (rightStartY - rightPanelScrollOffset);
     const auto visibleHeight = rightPanelViewportBounds.getHeight();
@@ -1079,6 +1124,57 @@ void PHASEUSDelayAudioProcessorEditor::pushSyncDivisionFromKnob(juce::Slider& kn
     syncTimeUpdateInProgress = false;
 }
 
+void PHASEUSDelayAudioProcessorEditor::bindFilterSlotAttachments(const int slotIndex)
+{
+    activeFilterSlot = juce::jlimit(1, 2, slotIndex);
+
+    filterTypeAttachment.reset();
+    filterEnableAttachment.reset();
+    filterInputAttachment.reset();
+    filterRouteAttachment.reset();
+    filterCutoffAttachment.reset();
+    filterQAttachment.reset();
+    filterMixAttachment.reset();
+    filterCombMsAttachment.reset();
+    filterCombFeedbackAttachment.reset();
+
+    if (activeFilterSlot == 1)
+    {
+        filterInputBox.clear(juce::dontSendNotification);
+        filterInputBox.addItemList({ "Dry", "Wet" }, 1);
+        filterTypeAttachment = std::make_unique<ComboBoxAttachment>(audioProcessor.apvts, PhaseusDelayParams::filterType, filterTypeBox);
+        filterEnableAttachment = std::make_unique<ButtonAttachment>(audioProcessor.apvts, PhaseusDelayParams::filter1Enable, filterEnableToggle);
+        filterInputAttachment = std::make_unique<ComboBoxAttachment>(audioProcessor.apvts, PhaseusDelayParams::filter1Input, filterInputBox);
+        filterRouteAttachment = std::make_unique<ComboBoxAttachment>(audioProcessor.apvts, PhaseusDelayParams::filter1Route, filterRouteBox);
+        filterCutoffAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filterCutoffHz, filterCutoffSlider);
+        filterQAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filterQ, filterQSlider);
+        filterMixAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filterMix, filterMixSlider);
+        filterCombMsAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filterCombMs, filterCombMsSlider);
+        filterCombFeedbackAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filterCombFeedback, filterCombFeedbackSlider);
+    }
+    else
+    {
+        filterInputBox.clear(juce::dontSendNotification);
+        filterInputBox.addItemList({ "Dry", "Wet", "Filter1" }, 1);
+        filterTypeAttachment = std::make_unique<ComboBoxAttachment>(audioProcessor.apvts, PhaseusDelayParams::filter2Type, filterTypeBox);
+        filterEnableAttachment = std::make_unique<ButtonAttachment>(audioProcessor.apvts, PhaseusDelayParams::filter2Enable, filterEnableToggle);
+        filterInputAttachment = std::make_unique<ComboBoxAttachment>(audioProcessor.apvts, PhaseusDelayParams::filter2Input, filterInputBox);
+        filterCutoffAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filter2CutoffHz, filterCutoffSlider);
+        filterQAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filter2Q, filterQSlider);
+        filterMixAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filter2Mix, filterMixSlider);
+        filterCombMsAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filter2CombMs, filterCombMsSlider);
+        filterCombFeedbackAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::filter2CombFeedback, filterCombFeedbackSlider);
+    }
+
+    updateFilterTabState();
+}
+
+void PHASEUSDelayAudioProcessorEditor::setActiveFilterSlot(const int slotIndex)
+{
+    bindFilterSlotAttachments(slotIndex);
+    updateModeVisibility();
+}
+
 void PHASEUSDelayAudioProcessorEditor::applyTheme()
 {
     const auto bg = juce::Colour::fromRGB(10, 10, 12);
@@ -1099,14 +1195,21 @@ void PHASEUSDelayAudioProcessorEditor::applyTheme()
         tab->setColour(juce::TextButton::textColourOnId, juce::Colours::black);
     }
 
-    for (auto* combo : { &simpleSyncDivisionBox, &pingSyncDivisionLeftBox, &pingSyncDivisionRightBox })
+    for (auto* tab : { &filterSlot1Tab, &filterSlot2Tab })
+    {
+        tab->setColour(juce::TextButton::buttonColourId, bg.withAlpha(0.78f));
+        tab->setColour(juce::TextButton::textColourOffId, fg.withAlpha(0.78f));
+        tab->setColour(juce::TextButton::textColourOnId, juce::Colours::black);
+    }
+
+    for (auto* combo : { &simpleSyncDivisionBox, &pingSyncDivisionLeftBox, &pingSyncDivisionRightBox, &filterInputBox, &filterRouteBox })
     {
         combo->setColour(juce::ComboBox::backgroundColourId, bg);
         combo->setColour(juce::ComboBox::textColourId, fg);
         combo->setColour(juce::ComboBox::outlineColourId, fg.withAlpha(0.25f));
     }
 
-    for (auto* toggle : { &loFiToggle, &reverseToggle, &duckingToggle, &diffusionToggle, &simpleSyncToggle, &pingSyncToggle, &pingLinkTimesToggle, &pingLinkFeedbackToggle, &grainPingPongToggle })
+    for (auto* toggle : { &loFiToggle, &reverseToggle, &duckingToggle, &diffusionToggle, &simpleSyncToggle, &pingSyncToggle, &pingLinkTimesToggle, &pingLinkFeedbackToggle, &grainPingPongToggle, &filterEnableToggle })
         toggle->setColour(juce::ToggleButton::textColourId, fg);
 
     rightPanelScrollBar.setColour(juce::ScrollBar::thumbColourId, juce::Colour::fromRGB(80, 190, 240).withAlpha(0.78f));
@@ -1128,7 +1231,7 @@ void PHASEUSDelayAudioProcessorEditor::applyTheme()
                          &grainAmountRandomLabel, &grainFeedbackRandomLabel, &grainPingPongPanLabel, &loFiAmountLabel,
                          &reverseMixLabel, &reverseStartLabel, &reverseEndLabel, &duckingAmountLabel, &duckingAttackLabel, &duckingReleaseLabel,
                          &diffusionAmountLabel, &diffusionSizeLabel,
-                         &filterTypeLabel, &filterCutoffLabel,
+                         &filterTypeLabel, &filterInputLabel, &filterRouteLabel, &filterCutoffLabel,
                          &filterQLabel, &filterMixLabel, &filterCombMsLabel, &filterCombFeedbackLabel })
     {
         label->setColour(juce::Label::textColourId, fg.withAlpha(0.88f));
@@ -1189,13 +1292,13 @@ void PHASEUSDelayAudioProcessorEditor::updateModeVisibility()
     pingTimeLeftSlider.setVisible(showPing);
     pingTimeRightLabel.setVisible(showPing);
     pingTimeRightSlider.setVisible(showPing);
-    pingTimeLinkLabel.setVisible(showPing);
+    pingTimeLinkLabel.setVisible(showPing && pingLinkTimesToggle.getToggleState());
 
     pingFeedbackLeftLabel.setVisible(showPing);
     pingFeedbackLeftSlider.setVisible(showPing);
     pingFeedbackRightLabel.setVisible(showPing);
     pingFeedbackRightSlider.setVisible(showPing);
-    pingFeedbackLinkLabel.setVisible(showPing);
+    pingFeedbackLinkLabel.setVisible(showPing && pingLinkFeedbackToggle.getToggleState());
 
     pingSyncToggle.setVisible(showPing);
     pingLinkTimesToggle.setVisible(showPing);
@@ -1255,6 +1358,13 @@ void PHASEUSDelayAudioProcessorEditor::updateModeVisibility()
     const auto filterType = filterTypeBox.getSelectedItemIndex();
     const auto combFilter = filterType == 4;
     filterTypeLabel.setVisible(filterActive);
+    filterSlot1Tab.setVisible(filterActive);
+    filterSlot2Tab.setVisible(filterActive);
+    filterEnableToggle.setVisible(filterActive);
+    filterInputLabel.setVisible(false);
+    filterInputBox.setVisible(false);
+    filterRouteLabel.setVisible(false);
+    filterRouteBox.setVisible(false);
     filterTypeBox.setVisible(false);
     filterOffTab.setVisible(filterActive);
     filterLpTab.setVisible(filterActive);
@@ -1325,6 +1435,7 @@ void PHASEUSDelayAudioProcessorEditor::updateFilterTabState()
 {
     const auto type = filterTypeBox.getSelectedItemIndex();
     const auto active = juce::Colour::fromRGB(236, 236, 236);
+    const auto inactive = juce::Colour::fromRGB(24, 24, 26);
 
     filterOffTab.setToggleState(type == 0, juce::dontSendNotification);
     filterLpTab.setToggleState(type == 1, juce::dontSendNotification);
@@ -1334,6 +1445,13 @@ void PHASEUSDelayAudioProcessorEditor::updateFilterTabState()
 
     for (auto* tab : { &filterOffTab, &filterLpTab, &filterHpTab, &filterNotchTab, &filterCombTab })
         tab->setColour(juce::TextButton::buttonOnColourId, active);
+
+    filterSlot1Tab.setToggleState(activeFilterSlot == 1, juce::dontSendNotification);
+    filterSlot2Tab.setToggleState(activeFilterSlot == 2, juce::dontSendNotification);
+    filterSlot1Tab.setColour(juce::TextButton::buttonOnColourId, active);
+    filterSlot2Tab.setColour(juce::TextButton::buttonOnColourId, active);
+    filterSlot1Tab.setColour(juce::TextButton::buttonColourId, inactive);
+    filterSlot2Tab.setColour(juce::TextButton::buttonColourId, inactive);
 
     if (filterResponseView != nullptr)
         filterResponseView->repaint();

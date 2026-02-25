@@ -238,3 +238,39 @@ Bu dosya, bu repoda yapilan tum kritik degisikliklerin, hatalarin ve cozumlerin 
 - Square button geometry (radius 0).
 - Sag panelde overflow-safe scroll.
 - Mode-specific clarity + wet path safety (filter/diffusion/reverse mantigi wet uzerinde).
+
+## 13) Layout/Routing Finalizasyonu (Yeni)
+
+### UI Final
+
+- Delay controls sol panelde toplandi; filter panel sol alta sabitlendi.
+- Random knob yapisi yenilendi:
+  - random parametreler alt alta degil,
+  - ana knobun sagina alinmis compact layout.
+- Knob sizing stratejisi:
+  - Autoscale denendi ama mode bazli tutarsizlik ve okunurluk sorunu yaratti.
+  - Final karar: fixed standard knob size (okunaklilik + layout kararliligi).
+- PingPong zincir ikon kurali:
+  - Ilgili link toggle kapaliysa zincir ikonu gizli.
+
+### Filter Chain Final (DSP)
+
+- 2 slot filter yapisi mevcut (`Filter 1`, `Filter 2`), fakat routing deterministic:
+  - `Filter 1` input = wet (sabit)
+  - `Filter 2` enabled -> `F1 -> F2 -> Out`
+
+## 14) Build/Release Operasyon Notu
+
+- Gelecekte yeni pluginler eklendiginde release pipeline tek plugin bazli calisabilir.
+- Prensip:
+  - Lokal: `cmake --build ... --target <PluginName>_VST3`
+  - CI: `workflow_dispatch` ile `plugin_name` alip sadece o target'i build etmek.
+- Sonuc:
+  - Delay'e dokunmadan yeni plugini tek basina hizli release etme imkani.
+  - `Filter 2` disabled -> `F1 -> Out`
+- Bu kural loop/ambiguity riskini kaldirir, test etmeyi kolaylastirir.
+
+### Kritik Ders
+
+- Asiri dinamik autoscale, host boyutlarinda modlar arasi farkli "algilanan kalite" yaratabiliyor.
+- UI'da sabit, muzik-prod odakli bir boyut standardi daha guvenli ve hizli.

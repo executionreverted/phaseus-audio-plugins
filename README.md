@@ -1,49 +1,65 @@
-# VST_Library
+# PHASEUS Audio Plugins
 
-Single-repo JUCE setup with shared framework and per-plugin folders.
+Custom VST development repository for my own artist tools and sound design workflow.
 
-## Structure
+Artist: **PHΛSEUS Ω**  
+SoundCloud: [https://soundcloud.com/iamphaseus](https://soundcloud.com/iamphaseus)
+
+## About
+
+This is a JUCE-based plugin monorepo:
+
+- one shared JUCE source
+- plugin-per-folder architecture
+- reusable UI/components across plugins
+- template + script flow for fast new plugin creation
+
+## Current Plugins
+
+## 1) PHASEUS Dayi Delay
+
+Multi-mode delay (`Simple`, `PingPong`, `Grain`) with:
+
+- tempo sync + random controls
+- reverse / ducking / lofi / diffusion
+- dual filter workflow
+- preset system
+
+Manual: [manuals/DAYI_DELAY_MANUAL.md](manuals/DAYI_DELAY_MANUAL.md)  
+Screenshot: [assets/dayidelay-screenshot.jpg](assets/dayidelay-screenshot.jpg)
+
+## Project Layout
 
 ```text
-VST_Library/
-  JUCE/                      # shared JUCE source (clone once)
+phaseus-audio-plugins/
+  JUCE/
   Plugins/
-    ReverbPlugin/
-      Source/
-      CMakeLists.txt
+    PHASEUS_Delay/
+  Shared/
   Templates/
-    DefaultPluginTemplate/
+  manuals/
+  assets/
   createplugin
   CMakeLists.txt
 ```
 
-## Setup
-
-1. Clone JUCE into the root:
-
-```bash
-git clone https://github.com/juce-framework/JUCE.git JUCE
-```
-
-2. Configure and build:
+## Build
 
 ```bash
 cmake -S . -B build
-cmake --build build --config Release
+cmake --build build --config Release --target PHASEUS_Delay_VST3
 ```
 
-## Add a new plugin
-
-```bash
-./createplugin Reverb2
-```
-
-This creates:
+macOS VST3 install path:
 
 ```text
-Plugins/Reverb2/
-  Source/
-  CMakeLists.txt
+~/Library/Audio/Plug-Ins/VST3/PHASEUS_Delay.vst3
 ```
 
-`Plugins/CMakeLists.txt` auto-discovers plugin folders, so no manual CMake edit is needed.
+## Create New Plugins
+
+```bash
+./createplugin MyNewPlugin
+```
+
+Plugin folders are auto-discovered by `Plugins/CMakeLists.txt`.

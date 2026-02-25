@@ -23,7 +23,10 @@
 - Header (fixed height): branding + preset + utility controls.
 - Control bar (row under header): mode selector and high-priority controls.
 - Main content: mode-specific controls.
-- Side panel (right): Wet/Dry as large hero knob.
+- Left panel:
+  - Upper: delay controls
+  - Lower: fixed filter section (always anchored, not floating on right)
+- Right panel: global controls (`Wet/Dry`, reverse, ducking, diffusion, etc.)
 
 ## Visual Direction
 
@@ -49,13 +52,25 @@
 - Wet/Dry remains visible in all modes.
 - Knob text boxes remain readable at a glance.
 - Sync modda time knob kaybolmaz; muziksel division text'iyle calisir.
+- PingPong chain icons:
+  - Time chain icon only visible when time link/sync relation is active.
+  - Feedback chain icon only visible when feedback link is active.
+- Random knobs:
+  - Random-enabled parameters use `main knob + random knob on the right` layout (vertical stacking yok).
 
 ## Current Plugin Mapping
 
 - Simple: Time, Feedback, Wet/Dry.
 - PingPong: Time L/R, Feedback L/R, sync toggles, Wet/Dry.
 - Grain: Base Time, Grain Size, Rate, Amount/Pan, Feedback, Grain PingPong, Wet/Dry.
-- Filter: Type tabs + response graph + compact sliders.
+- Filter:
+  - Left-bottom fixed section
+  - Slot tabs: `Filter 1`, `Filter 2`
+  - Shared edit panel (type tabs + response graph + compact sliders)
+  - Wet-chain behavior:
+    - `Filter 1` input always wet
+    - `Filter 2` enabled ise `F1 -> F2 -> Out`
+    - `Filter 2` disabled ise `F1 -> Out`
 
 ## Audio UX Safety Notes
 
@@ -93,3 +108,6 @@
   - daha dar value text box
 - Ping/Pong link gorseli image asset ile cizilir (zincir icon), text glyph degil.
 - Background image karartmali overlay ile kullanilir; readability her zaman oncelikli.
+- Delay knob sizing:
+  - Autoscale kaldirildi.
+  - Fixed readable standard sizes kullaniliyor (tutarlilik ve kontrol icin).

@@ -110,9 +110,14 @@ void PHASEUSDelayAudioProcessor::prepareToPlay(const double sampleRate, const in
 
     filterL.reset();
     filterR.reset();
+    filter2L.reset();
+    filter2R.reset();
     combBuffer.setSize(2, delayBufferSize);
     combBuffer.clear();
+    combBuffer2.setSize(2, delayBufferSize);
+    combBuffer2.clear();
     combWritePosition = 0;
+    combWritePosition2 = 0;
     const auto diffusionBufferSize = juce::jmax(32, static_cast<int>(0.12 * sampleRate) + samplesPerBlock + 1);
     diffusionBufferA.setSize(2, diffusionBufferSize);
     diffusionBufferB.setSize(2, diffusionBufferSize);
@@ -259,12 +264,22 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     const auto grainAmountRandomPct = apvts.getRawParameterValue(PhaseusDelayParams::grainAmountRandomPct)->load();
     const auto grainFeedbackRandomPct = apvts.getRawParameterValue(PhaseusDelayParams::grainFeedbackRandomPct)->load();
 
+    const auto filter1Enabled = apvts.getRawParameterValue(PhaseusDelayParams::filter1Enable)->load() > 0.5f;
+    const auto filter2Enabled = apvts.getRawParameterValue(PhaseusDelayParams::filter2Enable)->load() > 0.5f;
+
     const auto filterType = static_cast<int>(apvts.getRawParameterValue(PhaseusDelayParams::filterType)->load());
     const auto filterCutoffHz = apvts.getRawParameterValue(PhaseusDelayParams::filterCutoffHz)->load();
     const auto filterQ = apvts.getRawParameterValue(PhaseusDelayParams::filterQ)->load();
     const auto filterMix = clamp01(apvts.getRawParameterValue(PhaseusDelayParams::filterMix)->load());
     const auto filterCombMs = apvts.getRawParameterValue(PhaseusDelayParams::filterCombMs)->load();
     const auto filterCombFeedback = juce::jlimit(0.0f, 0.97f, apvts.getRawParameterValue(PhaseusDelayParams::filterCombFeedback)->load());
+
+    const auto filter2Type = static_cast<int>(apvts.getRawParameterValue(PhaseusDelayParams::filter2Type)->load());
+    const auto filter2CutoffHz = apvts.getRawParameterValue(PhaseusDelayParams::filter2CutoffHz)->load();
+    const auto filter2Q = apvts.getRawParameterValue(PhaseusDelayParams::filter2Q)->load();
+    const auto filter2Mix = clamp01(apvts.getRawParameterValue(PhaseusDelayParams::filter2Mix)->load());
+    const auto filter2CombMs = apvts.getRawParameterValue(PhaseusDelayParams::filter2CombMs)->load();
+    const auto filter2CombFeedback = juce::jlimit(0.0f, 0.97f, apvts.getRawParameterValue(PhaseusDelayParams::filter2CombFeedback)->load());
 
     auto* left = buffer.getWritePointer(0);
     auto* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : nullptr;
@@ -275,6 +290,8 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     auto* reverseRight = reverseBuffer.getWritePointer(1);
     auto* combLeft = combBuffer.getWritePointer(0);
     auto* combRight = combBuffer.getWritePointer(1);
+    auto* comb2Left = combBuffer2.getWritePointer(0);
+    auto* comb2Right = combBuffer2.getWritePointer(1);
     auto* diffusionALeft = diffusionBufferA.getWritePointer(0);
     auto* diffusionARight = diffusionBufferA.getWritePointer(1);
     auto* diffusionBLeft = diffusionBufferB.getWritePointer(0);
@@ -286,6 +303,7 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     const auto basePingDelayRightSamples = msToSamples(pingTimeRightMs, currentSampleRate, delayBufferSize);
 
     const auto combDelaySamples = msToSamples(filterCombMs, currentSampleRate, combBuffer.getNumSamples());
+    const auto comb2DelaySamples = msToSamples(filter2CombMs, currentSampleRate, combBuffer2.getNumSamples());
     const auto diffusionDelayA = msToSamples(diffusionSizeMs, currentSampleRate, diffusionBufferA.getNumSamples());
     const auto diffusionDelayAL = juce::jlimit(1, diffusionBufferA.getNumSamples() - 1, diffusionDelayA);
     const auto diffusionDelayAR = juce::jlimit(1, diffusionBufferA.getNumSamples() - 1, diffusionDelayA + 11);
@@ -308,6 +326,22 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     {
         filterL.setCoefficients(juce::IIRCoefficients::makeNotchFilter(currentSampleRate, filterCutoffHz, filterQ));
         filterR.setCoefficients(juce::IIRCoefficients::makeNotchFilter(currentSampleRate, filterCutoffHz, filterQ));
+    }
+
+    if (filter2Type == 1)
+    {
+        filter2L.setCoefficients(juce::IIRCoefficients::makeLowPass(currentSampleRate, filter2CutoffHz, filter2Q));
+        filter2R.setCoefficients(juce::IIRCoefficients::makeLowPass(currentSampleRate, filter2CutoffHz, filter2Q));
+    }
+    else if (filter2Type == 2)
+    {
+        filter2L.setCoefficients(juce::IIRCoefficients::makeHighPass(currentSampleRate, filter2CutoffHz, filter2Q));
+        filter2R.setCoefficients(juce::IIRCoefficients::makeHighPass(currentSampleRate, filter2CutoffHz, filter2Q));
+    }
+    else if (filter2Type == 3)
+    {
+        filter2L.setCoefficients(juce::IIRCoefficients::makeNotchFilter(currentSampleRate, filter2CutoffHz, filter2Q));
+        filter2R.setCoefficients(juce::IIRCoefficients::makeNotchFilter(currentSampleRate, filter2CutoffHz, filter2Q));
     }
 
     for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
@@ -676,28 +710,76 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
             --loFiDownsampleCounter;
         }
 
-        if (filterType == 1 || filterType == 2 || filterType == 3)
+        auto processFilterSlot = [](const int type, const float mix, const float combFeedback, const int combDelay,
+                                    juce::IIRFilter& iirL, juce::IIRFilter& iirR, float* combL, float* combR, const int combSize, int combWrite,
+                                    float inL, float inR)
         {
-            const auto fL = filterL.processSingleSampleRaw(wetProcL);
-            const auto fR = filterR.processSingleSampleRaw(wetProcR);
-            wetProcL = wetProcL * (1.0f - filterMix) + fL * filterMix;
-            wetProcR = wetProcR * (1.0f - filterMix) + fR * filterMix;
+            auto outL = inL;
+            auto outR = inR;
+
+            if (type == 1 || type == 2 || type == 3)
+            {
+                const auto fL = iirL.processSingleSampleRaw(inL);
+                const auto fR = iirR.processSingleSampleRaw(inR);
+                outL = inL * (1.0f - mix) + fL * mix;
+                outR = inR * (1.0f - mix) + fR * mix;
+            }
+            else if (type == 4)
+            {
+                auto combRead = combWrite - combDelay;
+                while (combRead < 0)
+                    combRead += combSize;
+
+                const auto delayedL = combL[combRead];
+                const auto delayedR = combR[combRead];
+                combL[combWrite] = inL + delayedL * combFeedback;
+                combR[combWrite] = inR + delayedR * combFeedback;
+
+                const auto combWetL = inL + delayedL * 0.7f;
+                const auto combWetR = inR + delayedR * 0.7f;
+                outL = inL * (1.0f - mix) + combWetL * mix;
+                outR = inR * (1.0f - mix) + combWetR * mix;
+            }
+
+            return std::pair<float, float> { outL, outR };
+        };
+
+        auto f1InL = wetProcL;
+        auto f1InR = wetProcR;
+        auto f1OutL = f1InL;
+        auto f1OutR = f1InR;
+        if (filter1Enabled)
+        {
+            const auto p = processFilterSlot(filterType, filterMix, filterCombFeedback, combDelaySamples,
+                                             filterL, filterR, combLeft, combRight, combBuffer.getNumSamples(), combWritePosition,
+                                             f1InL, f1InR);
+            f1OutL = p.first;
+            f1OutR = p.second;
         }
-        else if (filterType == 4)
+
+        auto f2InL = f1OutL;
+        auto f2InR = f1OutR;
+
+        auto f2OutL = f2InL;
+        auto f2OutR = f2InR;
+        if (filter2Enabled)
         {
-            auto combRead = combWritePosition - combDelaySamples;
-            while (combRead < 0)
-                combRead += combBuffer.getNumSamples();
+            const auto p = processFilterSlot(filter2Type, filter2Mix, filter2CombFeedback, comb2DelaySamples,
+                                             filter2L, filter2R, comb2Left, comb2Right, combBuffer2.getNumSamples(), combWritePosition2,
+                                             f2InL, f2InR);
+            f2OutL = p.first;
+            f2OutR = p.second;
+        }
 
-            const auto delayedL = combLeft[combRead];
-            const auto delayedR = combRight[combRead];
-            combLeft[combWritePosition] = wetProcL + delayedL * filterCombFeedback;
-            combRight[combWritePosition] = wetProcR + delayedR * filterCombFeedback;
-
-            const auto combL = wetProcL + delayedL * 0.7f;
-            const auto combR = wetProcR + delayedR * 0.7f;
-            wetProcL = wetProcL * (1.0f - filterMix) + combL * filterMix;
-            wetProcR = wetProcR * (1.0f - filterMix) + combR * filterMix;
+        if (filter2Enabled)
+        {
+            wetProcL = f2OutL;
+            wetProcR = f2OutR;
+        }
+        else
+        {
+            wetProcL = f1OutL;
+            wetProcR = f1OutR;
         }
 
         auto outL = inL * (1.0f - wetDryValue) + wetProcL * wetDryValue;
@@ -720,6 +802,8 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
 
         if (++combWritePosition >= combBuffer.getNumSamples())
             combWritePosition = 0;
+        if (++combWritePosition2 >= combBuffer2.getNumSamples())
+            combWritePosition2 = 0;
 
         if (++diffusionWriteA >= diffusionBufferA.getNumSamples())
             diffusionWriteA = 0;
@@ -885,18 +969,34 @@ juce::AudioProcessorValueTreeState::ParameterLayout PHASEUSDelayAudioProcessor::
 
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         PhaseusDelayParams::filterType,
-        "Filter Type",
+        "Filter 1 Type",
         juce::StringArray { "Off", "LowPass", "HighPass", "Notch", "Comb" },
         0));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(PhaseusDelayParams::filter1Enable, "Filter 1 Enable", false));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(PhaseusDelayParams::filter1Input, "Filter 1 Input", juce::StringArray { "Dry", "Wet" }, 1));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(PhaseusDelayParams::filter1Route, "Filter 1 Route", juce::StringArray { "Out", "Filter2" }, 0));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         PhaseusDelayParams::filterCutoffHz,
-        "Filter Cutoff",
+        "Filter 1 Cutoff",
         juce::NormalisableRange<float>(20.0f, 20000.0f, 0.01f, 0.3f),
         1800.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filterQ, "Filter Q", 0.1f, 10.0f, 0.8f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filterMix, "Filter Mix", 0.0f, 1.0f, 0.35f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filterCombMs, "Filter Comb Time", 1.0f, 60.0f, 12.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filterCombFeedback, "Filter Comb Feedback", 0.0f, 0.97f, 0.45f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filterQ, "Filter 1 Q", 0.1f, 10.0f, 0.8f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filterMix, "Filter 1 Mix", 0.0f, 1.0f, 0.35f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filterCombMs, "Filter 1 Comb Time", 1.0f, 60.0f, 12.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filterCombFeedback, "Filter 1 Comb Feedback", 0.0f, 0.97f, 0.45f));
+
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(PhaseusDelayParams::filter2Type, "Filter 2 Type", juce::StringArray { "Off", "LowPass", "HighPass", "Notch", "Comb" }, 0));
+    params.push_back(std::make_unique<juce::AudioParameterBool>(PhaseusDelayParams::filter2Enable, "Filter 2 Enable", false));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>(PhaseusDelayParams::filter2Input, "Filter 2 Input", juce::StringArray { "Dry", "Wet", "Filter1" }, 2));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        PhaseusDelayParams::filter2CutoffHz,
+        "Filter 2 Cutoff",
+        juce::NormalisableRange<float>(20.0f, 20000.0f, 0.01f, 0.3f),
+        4800.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filter2Q, "Filter 2 Q", 0.1f, 10.0f, 0.8f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filter2Mix, "Filter 2 Mix", 0.0f, 1.0f, 0.35f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filter2CombMs, "Filter 2 Comb Time", 1.0f, 60.0f, 12.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::filter2CombFeedback, "Filter 2 Comb Feedback", 0.0f, 0.97f, 0.45f));
 
     return { params.begin(), params.end() };
 }
