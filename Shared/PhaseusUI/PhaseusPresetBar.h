@@ -9,6 +9,7 @@ class PresetBar final : public juce::Component,
 {
 public:
     PresetBar(juce::AudioProcessorValueTreeState& stateToUse, const juce::String& pluginNameToUse);
+    ~PresetBar() override;
 
     void resized() override;
     void applyTheme(bool darkModeEnabled);
@@ -39,5 +40,6 @@ private:
     juce::String selectedPresetName { "Init" };
     juce::String referenceStateSignature;
     bool presetDirty = false;
+    int lastPresetSelectionId = 1;
 };
 } // namespace phaseus

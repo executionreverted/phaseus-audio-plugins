@@ -58,6 +58,29 @@ macOS VST3 install path:
 ~/Library/Audio/Plug-Ins/VST3/PHASEUS_Delay.vst3
 ```
 
+## macOS Install (From GitHub Releases)
+
+1. Download the latest `PHASEUS_Delay-*-macOS.zip` from the GitHub `Releases` page.
+2. Extract the zip and copy `PHASEUS_Delay.vst3` into:
+
+```bash
+mkdir -p ~/Library/Audio/Plug-Ins/VST3
+cp -R /path/to/PHASEUS_Delay.vst3 ~/Library/Audio/Plug-Ins/VST3/
+```
+
+3. Remove macOS quarantine attributes:
+
+```bash
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/PHASEUS_Delay.vst3
+```
+
+4. Fully quit and reopen your DAW.
+5. Run plugin scan/rescan and load `PHASEUS_Delay`.
+
+Notes:
+- If the build is not notarized/signed, macOS Gatekeeper may show a warning.
+- If needed, go to `System Settings > Privacy & Security` and click `Open Anyway`.
+
 ## Create New Plugins
 
 ```bash
