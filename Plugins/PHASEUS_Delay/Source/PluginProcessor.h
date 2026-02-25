@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <array>
 
 namespace PhaseusDelayParams
 {
@@ -17,9 +18,12 @@ inline constexpr const char* duckingEnable = "duckingEnable";
 inline constexpr const char* duckingAmount = "duckingAmount";
 inline constexpr const char* duckingAttackMs = "duckingAttackMs";
 inline constexpr const char* duckingReleaseMs = "duckingReleaseMs";
+inline constexpr const char* duckingDetectorHpHz = "duckingDetectorHpHz";
+inline constexpr const char* duckingDetectorLpHz = "duckingDetectorLpHz";
 inline constexpr const char* diffusionEnable = "diffusionEnable";
 inline constexpr const char* diffusionAmount = "diffusionAmount";
 inline constexpr const char* diffusionSizeMs = "diffusionSizeMs";
+inline constexpr const char* wetWidth = "wetWidth";
 
 inline constexpr const char* simpleTimeMs = "simpleTimeMs";
 inline constexpr const char* simpleFeedback = "simpleFeedback";
@@ -112,6 +116,19 @@ public:
 
 private:
     static constexpr double maxDelaySeconds = 4.0;
+    static constexpr int maxGrainVoices = 8;
+
+    struct GrainVoice
+    {
+        bool active = false;
+        int samplesLeft = 0;
+        int totalSamples = 1;
+        float readPosition = 0.0f;
+        float pitchRatio = 1.0f;
+        float amount = 0.0f;
+        float feedback = 0.0f;
+        float pan = 0.0f;
+    };
 
     juce::AudioBuffer<float> delayBuffer;
     juce::AudioBuffer<float> reverseBuffer;
@@ -119,13 +136,9 @@ private:
     double currentSampleRate = 44100.0;
 
     int grainSamplesUntilNext = 0;
-    int grainSamplesLeft = 0;
-    int grainCurrentLengthSamples = 1;
     int currentGrainDelaySamples = 1;
-    float currentGrainReadPosition = 0.0f;
-    float currentGrainPitchRatio = 1.0f;
-    float currentGrainFeedback = 0.35f;
-    float currentGrainAmount = 0.5f;
+    std::array<GrainVoice, maxGrainVoices> grainVoices;
+    int nextGrainVoiceIndex = 0;
     bool grainPanToRight = false;
     float grainWetSmoothedL = 0.0f;
     float grainWetSmoothedR = 0.0f;
@@ -160,6 +173,8 @@ private:
     float pingHeldRandomFeedbackLeft = 0.40f;
     float pingHeldRandomFeedbackRight = 0.40f;
     float duckEnvelope = 0.0f;
+    float duckDetectorHpState = 0.0f;
+    float duckDetectorLpState = 0.0f;
     int reverseSamplesRemaining = 0;
     int reverseLengthSamples = 1;
     int reverseAnchor = 0;

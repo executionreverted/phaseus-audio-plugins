@@ -79,9 +79,13 @@ private:
     juce::Slider duckingAmountSlider;
     juce::Slider duckingAttackSlider;
     juce::Slider duckingReleaseSlider;
+    juce::Slider duckingDetectorHpSlider;
+    juce::Slider duckingDetectorLpSlider;
     juce::Label duckingAmountLabel;
     juce::Label duckingAttackLabel;
     juce::Label duckingReleaseLabel;
+    juce::Label duckingDetectorHpLabel;
+    juce::Label duckingDetectorLpLabel;
     juce::ToggleButton diffusionToggle;
     juce::Slider diffusionAmountSlider;
     juce::Slider diffusionSizeSlider;
@@ -90,7 +94,9 @@ private:
     juce::ScrollBar rightPanelScrollBar { false };
 
     juce::Slider wetDrySlider;
+    juce::Slider wetWidthSlider;
     juce::Label wetDryLabel;
+    juce::Label wetWidthLabel;
 
     juce::ToggleButton simpleSyncToggle;
     juce::ComboBox simpleSyncDivisionBox;
@@ -205,9 +211,12 @@ private:
     std::unique_ptr<SliderAttachment> duckingAmountAttachment;
     std::unique_ptr<SliderAttachment> duckingAttackAttachment;
     std::unique_ptr<SliderAttachment> duckingReleaseAttachment;
+    std::unique_ptr<SliderAttachment> duckingDetectorHpAttachment;
+    std::unique_ptr<SliderAttachment> duckingDetectorLpAttachment;
     std::unique_ptr<ButtonAttachment> diffusionEnableAttachment;
     std::unique_ptr<SliderAttachment> diffusionAmountAttachment;
     std::unique_ptr<SliderAttachment> diffusionSizeAttachment;
+    std::unique_ptr<SliderAttachment> wetWidthAttachment;
 
     std::unique_ptr<SliderAttachment> simpleTimeAttachment;
     std::unique_ptr<SliderAttachment> simpleFeedbackAttachment;

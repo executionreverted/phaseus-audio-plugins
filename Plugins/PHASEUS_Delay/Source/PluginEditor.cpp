@@ -233,7 +233,11 @@ PHASEUSDelayAudioProcessorEditor::PHASEUSDelayAudioProcessorEditor(PHASEUSDelayA
     setupKnob(duckingAmountSlider, " %", 0.45);
     setupKnob(duckingAttackSlider, " ms", 16.0);
     setupKnob(duckingReleaseSlider, " ms", 220.0);
-    for (auto* slider : { &duckingAmountSlider, &duckingAttackSlider, &duckingReleaseSlider })
+    setupKnob(duckingDetectorHpSlider, " Hz", 120.0);
+    setupKnob(duckingDetectorLpSlider, " Hz", 8000.0);
+    duckingDetectorHpSlider.setSkewFactorFromMidPoint(350.0);
+    duckingDetectorLpSlider.setSkewFactorFromMidPoint(3500.0);
+    for (auto* slider : { &duckingAmountSlider, &duckingAttackSlider, &duckingReleaseSlider, &duckingDetectorHpSlider, &duckingDetectorLpSlider })
     {
         slider->setSliderStyle(juce::Slider::LinearHorizontal);
         slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 72, 18);
@@ -243,6 +247,8 @@ PHASEUSDelayAudioProcessorEditor::PHASEUSDelayAudioProcessorEditor(PHASEUSDelayA
     setupLabel(duckingAmountLabel, "Duck Amount");
     setupLabel(duckingAttackLabel, "Duck Attack");
     setupLabel(duckingReleaseLabel, "Duck Release");
+    setupLabel(duckingDetectorHpLabel, "Duck HP");
+    setupLabel(duckingDetectorLpLabel, "Duck LP");
 
     setupToggle(diffusionToggle, "Diffusion");
     setupKnob(diffusionAmountSlider, " %", 0.30);
@@ -289,7 +295,13 @@ PHASEUSDelayAudioProcessorEditor::PHASEUSDelayAudioProcessorEditor(PHASEUSDelayA
     }
 
     setupKnob(wetDrySlider, " %", 0.35);
+    setupKnob(wetWidthSlider, " %", 1.0);
+    wetWidthSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    wetWidthSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 72, 18);
+    wetWidthSlider.textFromValueFunction = [](const double v) { return juce::String(v * 100.0, 1) + " %"; };
+    wetWidthSlider.valueFromTextFunction = [](const juce::String& t) { return juce::jlimit(0.0, 2.0, t.upToFirstOccurrenceOf("%", false, false).getDoubleValue() / 100.0); };
     setupLabel(wetDryLabel, "Wet / Dry");
+    setupLabel(wetWidthLabel, "Wet Width");
 
     setupToggle(simpleSyncToggle, "Tempo Sync");
     simpleSyncDivisionBox.addItemList(syncDivisions(), 1);
@@ -416,6 +428,7 @@ PHASEUSDelayAudioProcessorEditor::PHASEUSDelayAudioProcessorEditor(PHASEUSDelayA
     setupLabel(grainFeedbackRandomLabel, "Random");
 
     wetDryAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::wetDry, wetDrySlider);
+    wetWidthAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::wetWidth, wetWidthSlider);
     outputGainAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::outputGainDb, outputGainSlider);
     loFiAttachment = std::make_unique<ButtonAttachment>(audioProcessor.apvts, PhaseusDelayParams::loFiMode, loFiToggle);
     loFiAmountAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::loFiAmount, loFiAmountSlider);
@@ -427,6 +440,8 @@ PHASEUSDelayAudioProcessorEditor::PHASEUSDelayAudioProcessorEditor(PHASEUSDelayA
     duckingAmountAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::duckingAmount, duckingAmountSlider);
     duckingAttackAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::duckingAttackMs, duckingAttackSlider);
     duckingReleaseAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::duckingReleaseMs, duckingReleaseSlider);
+    duckingDetectorHpAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::duckingDetectorHpHz, duckingDetectorHpSlider);
+    duckingDetectorLpAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::duckingDetectorLpHz, duckingDetectorLpSlider);
     diffusionEnableAttachment = std::make_unique<ButtonAttachment>(audioProcessor.apvts, PhaseusDelayParams::diffusionEnable, diffusionToggle);
     diffusionAmountAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::diffusionAmount, diffusionAmountSlider);
     diffusionSizeAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, PhaseusDelayParams::diffusionSizeMs, diffusionSizeSlider);
@@ -919,6 +934,10 @@ void PHASEUSDelayAudioProcessorEditor::resized()
     const int wetX = rightPanelViewportBounds.getX() + (rightPanelViewportBounds.getWidth() - wetSliderW) / 2;
     wetDrySlider.setBounds(wetX, rightY, wetSliderW, wetKnob + textH);
     rightY += wetKnob + textH + 10;
+    auto rowWetWidth = juce::Rectangle<int>(rightPanelViewportBounds.getX(), rightY, rightPanelViewportBounds.getWidth(), 20);
+    wetWidthLabel.setBounds(rowWetWidth.removeFromLeft(88));
+    wetWidthSlider.setBounds(rowWetWidth);
+    rightY += 24;
 
     if (loFiAmountSlider.isVisible())
     {
@@ -965,6 +984,16 @@ void PHASEUSDelayAudioProcessorEditor::resized()
         auto rowDuckRel = juce::Rectangle<int>(rightPanelViewportBounds.getX(), rightY, rightPanelViewportBounds.getWidth(), 20);
         duckingReleaseLabel.setBounds(rowDuckRel.removeFromLeft(88));
         duckingReleaseSlider.setBounds(rowDuckRel);
+        rightY += 20;
+
+        auto rowDuckHp = juce::Rectangle<int>(rightPanelViewportBounds.getX(), rightY, rightPanelViewportBounds.getWidth(), 20);
+        duckingDetectorHpLabel.setBounds(rowDuckHp.removeFromLeft(88));
+        duckingDetectorHpSlider.setBounds(rowDuckHp);
+        rightY += 20;
+
+        auto rowDuckLp = juce::Rectangle<int>(rightPanelViewportBounds.getX(), rightY, rightPanelViewportBounds.getWidth(), 20);
+        duckingDetectorLpLabel.setBounds(rowDuckLp.removeFromLeft(88));
+        duckingDetectorLpSlider.setBounds(rowDuckLp);
         rightY += 24;
     }
 
@@ -1230,6 +1259,7 @@ void PHASEUSDelayAudioProcessorEditor::applyTheme()
                          &grainSizeRandomLabel, &grainRateRandomLabel, &grainPitchRandomLabel,
                          &grainAmountRandomLabel, &grainFeedbackRandomLabel, &grainPingPongPanLabel, &loFiAmountLabel,
                          &reverseMixLabel, &reverseStartLabel, &reverseEndLabel, &duckingAmountLabel, &duckingAttackLabel, &duckingReleaseLabel,
+                         &duckingDetectorHpLabel, &duckingDetectorLpLabel, &wetWidthLabel,
                          &diffusionAmountLabel, &diffusionSizeLabel,
                          &filterTypeLabel, &filterInputLabel, &filterRouteLabel, &filterCutoffLabel,
                          &filterQLabel, &filterMixLabel, &filterCombMsLabel, &filterCombFeedbackLabel })
@@ -1244,6 +1274,7 @@ void PHASEUSDelayAudioProcessorEditor::applyTheme()
                           &grainRateSlider, &grainPitchSlider, &grainAmountSlider, &grainFeedbackSlider,
                           &grainPingPongPanSlider, &loFiAmountSlider,
                           &reverseMixSlider, &reverseStartSlider, &reverseEndSlider, &duckingAmountSlider, &duckingAttackSlider, &duckingReleaseSlider,
+                          &duckingDetectorHpSlider, &duckingDetectorLpSlider, &wetWidthSlider,
                           &diffusionAmountSlider, &diffusionSizeSlider,
                           &pingTimeLeftRandomSlider, &pingTimeRightRandomSlider, &pingFeedbackLeftRandomSlider, &pingFeedbackRightRandomSlider,
                           &grainBaseTimeRandomSlider, &grainSizeRandomSlider, &grainRateRandomSlider,
@@ -1387,6 +1418,8 @@ void PHASEUSDelayAudioProcessorEditor::updateModeVisibility()
 
     wetDrySlider.setVisible(true);
     wetDryLabel.setVisible(true);
+    wetWidthLabel.setVisible(true);
+    wetWidthSlider.setVisible(true);
     loFiAmountLabel.setVisible(loFiToggle.getToggleState());
     loFiAmountSlider.setVisible(loFiToggle.getToggleState());
     reverseToggle.setVisible(true);
@@ -1404,6 +1437,10 @@ void PHASEUSDelayAudioProcessorEditor::updateModeVisibility()
     duckingAttackSlider.setVisible(duckingExpanded);
     duckingReleaseLabel.setVisible(duckingExpanded);
     duckingReleaseSlider.setVisible(duckingExpanded);
+    duckingDetectorHpLabel.setVisible(duckingExpanded);
+    duckingDetectorHpSlider.setVisible(duckingExpanded);
+    duckingDetectorLpLabel.setVisible(duckingExpanded);
+    duckingDetectorLpSlider.setVisible(duckingExpanded);
     diffusionToggle.setVisible(true);
     const auto diffusionExpanded = diffusionToggle.getToggleState();
     diffusionAmountLabel.setVisible(diffusionExpanded);

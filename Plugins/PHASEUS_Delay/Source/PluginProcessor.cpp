@@ -76,6 +76,19 @@ float grainWindow(const int samplesLeft, const int totalSamples)
     const auto progress = 1.0f - static_cast<float>(samplesLeft) / static_cast<float>(safeTotal);
     return 0.5f - 0.5f * std::cos(juce::MathConstants<float>::twoPi * progress);
 }
+
+float monoFromStereoPreservingSingleSide(const float left, const float right)
+{
+    const auto sum = left + right;
+    const auto lSilent = std::abs(left) < 1.0e-6f;
+    const auto rSilent = std::abs(right) < 1.0e-6f;
+
+    // If one side is effectively silent (common host routing case), do not apply 0.5 attenuation.
+    if (lSilent != rSilent)
+        return sum;
+
+    return 0.5f * sum;
+}
 } // namespace
 
 PHASEUSDelayAudioProcessor::PHASEUSDelayAudioProcessor()
@@ -97,13 +110,10 @@ void PHASEUSDelayAudioProcessor::prepareToPlay(const double sampleRate, const in
 
     writePosition = 0;
     grainSamplesUntilNext = 0;
-    grainSamplesLeft = 0;
-    grainCurrentLengthSamples = 1;
     currentGrainDelaySamples = juce::jmax(1, static_cast<int>(0.2 * sampleRate));
-    currentGrainReadPosition = 0.0f;
-    currentGrainPitchRatio = 1.0f;
-    currentGrainFeedback = 0.35f;
-    currentGrainAmount = 0.5f;
+    nextGrainVoiceIndex = 0;
+    for (auto& voice : grainVoices)
+        voice = {};
     grainPanToRight = false;
     grainWetSmoothedL = 0.0f;
     grainWetSmoothedR = 0.0f;
@@ -141,6 +151,8 @@ void PHASEUSDelayAudioProcessor::prepareToPlay(const double sampleRate, const in
     pingHeldRandomFeedbackLeft = 0.40f;
     pingHeldRandomFeedbackRight = 0.40f;
     duckEnvelope = 0.0f;
+    duckDetectorHpState = 0.0f;
+    duckDetectorLpState = 0.0f;
     reverseSamplesRemaining = 0;
     reverseLengthSamples = 1;
     reverseAnchor = 0;
@@ -187,9 +199,13 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
     const auto duckingAmount = clamp01(apvts.getRawParameterValue(PhaseusDelayParams::duckingAmount)->load());
     const auto duckingAttackMs = juce::jmax(1.0f, apvts.getRawParameterValue(PhaseusDelayParams::duckingAttackMs)->load());
     const auto duckingReleaseMs = juce::jmax(5.0f, apvts.getRawParameterValue(PhaseusDelayParams::duckingReleaseMs)->load());
+    const auto duckingDetectorHpHz = juce::jlimit(20.0f, 4000.0f, apvts.getRawParameterValue(PhaseusDelayParams::duckingDetectorHpHz)->load());
+    const auto duckingDetectorLpHzRaw = juce::jlimit(200.0f, 20000.0f, apvts.getRawParameterValue(PhaseusDelayParams::duckingDetectorLpHz)->load());
+    const auto duckingDetectorLpHz = juce::jmax(duckingDetectorHpHz + 20.0f, duckingDetectorLpHzRaw);
     const auto diffusionEnabled = apvts.getRawParameterValue(PhaseusDelayParams::diffusionEnable)->load() > 0.5f;
     const auto diffusionAmount = clamp01(apvts.getRawParameterValue(PhaseusDelayParams::diffusionAmount)->load());
     const auto diffusionSizeMs = juce::jmax(2.0f, apvts.getRawParameterValue(PhaseusDelayParams::diffusionSizeMs)->load());
+    const auto wetWidth = juce::jlimit(0.0f, 2.0f, apvts.getRawParameterValue(PhaseusDelayParams::wetWidth)->load());
 
     auto simpleTimeMs = apvts.getRawParameterValue(PhaseusDelayParams::simpleTimeMs)->load();
     const auto simpleFeedback = juce::jlimit(0.0f, 0.97f, apvts.getRawParameterValue(PhaseusDelayParams::simpleFeedback)->load());
@@ -514,22 +530,21 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
 
             const auto delayedL = readDelayed(0, currentPingDelayLeftSamples);
             const auto delayedR = readDelayed(1, currentPingDelayRightSamples);
+            const auto monoIn = monoFromStereoPreservingSingleSide(inL, inR);
 
             wetL = delayedL;
             wetR = delayedR;
 
-            writeL = inL + delayedR * pingFeedbackLeftBlock;
-            writeR = inR + delayedL * pingFeedbackRightBlock;
+            // True ping-pong: inject the source into one side, bounce via cross-feedback.
+            writeL = monoIn + delayedR * pingFeedbackLeftBlock;
+            writeR = delayedL * pingFeedbackRightBlock;
 
             grainWetSmoothedL = wetL;
             grainWetSmoothedR = wetR;
         }
         else
         {
-            if (grainSamplesLeft <= 0 && grainSamplesUntilNext > 0)
-                --grainSamplesUntilNext;
-
-            if (grainSamplesLeft <= 0 && grainSamplesUntilNext <= 0)
+            if (grainSamplesUntilNext <= 0)
             {
                 grainPanToRight = !grainPanToRight;
 
@@ -541,48 +556,69 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
                 const auto randomFeedback = juce::jlimit(0.0f, 0.97f, applyPercentRandom(grainFeedback, grainFeedbackRandomPct, random));
 
                 currentGrainDelaySamples = msToSamples(randomBaseMs, currentSampleRate, delayBufferSize);
-                grainCurrentLengthSamples = juce::jmax(1, msToSamples(randomSizeMs, currentSampleRate, delayBufferSize));
-                grainSamplesLeft = grainCurrentLengthSamples;
+                const auto grainLengthSamples = juce::jmax(1, msToSamples(randomSizeMs, currentSampleRate, delayBufferSize));
+
+                auto& voice = grainVoices[static_cast<size_t>(nextGrainVoiceIndex)];
+                voice.active = true;
+                voice.samplesLeft = grainLengthSamples;
+                voice.totalSamples = grainLengthSamples;
+                voice.pitchRatio = semitoneToRatio(randomPitchSemitones);
+                voice.amount = randomAmount;
+                voice.feedback = randomFeedback;
+                voice.pan = grainPingPong ? (grainPanToRight ? grainPingPongPan : -grainPingPongPan) : 0.0f;
+
+                const auto sprayPct = clampPct(grainBaseTimeRandomPct);
+                const auto spraySamples = static_cast<int>(static_cast<float>(currentGrainDelaySamples) * 0.35f * (sprayPct * 0.01f));
+                const auto sprayOffset = spraySamples > 0 ? random.nextInt(spraySamples * 2 + 1) - spraySamples : 0;
+                auto startDelaySamples = juce::jlimit(1, delayBufferSize - 1, currentGrainDelaySamples + sprayOffset);
+                voice.readPosition = static_cast<float>(writePosition - startDelaySamples);
+                while (voice.readPosition < 0.0f)
+                    voice.readPosition += static_cast<float>(delayBufferSize);
+                while (voice.readPosition >= static_cast<float>(delayBufferSize))
+                    voice.readPosition -= static_cast<float>(delayBufferSize);
+
+                nextGrainVoiceIndex = (nextGrainVoiceIndex + 1) % maxGrainVoices;
 
                 const auto intervalSamples = juce::jmax(1, static_cast<int>(currentSampleRate / randomRateHz));
-                grainSamplesUntilNext = juce::jmax(0, intervalSamples - grainCurrentLengthSamples);
-                currentGrainAmount = randomAmount;
-                currentGrainFeedback = randomFeedback;
-                currentGrainPitchRatio = semitoneToRatio(randomPitchSemitones);
-
-                currentGrainReadPosition = static_cast<float>(writePosition - currentGrainDelaySamples);
-                while (currentGrainReadPosition < 0.0f)
-                    currentGrainReadPosition += static_cast<float>(delayBufferSize);
+                grainSamplesUntilNext = intervalSamples;
             }
+            --grainSamplesUntilNext;
 
-            auto delayedMono = 0.0f;
-            auto grainWetMono = 0.0f;
+            auto wetSumL = 0.0f;
+            auto wetSumR = 0.0f;
+            auto feedbackAccumulator = 0.0f;
 
-            if (grainSamplesLeft > 0)
+            for (auto& voice : grainVoices)
             {
-                delayedMono = readMonoInterpolated(currentGrainReadPosition);
-                const auto envelope = grainWindow(grainSamplesLeft, grainCurrentLengthSamples);
-                grainWetMono = delayedMono * envelope * currentGrainAmount;
-                --grainSamplesLeft;
+                if (!voice.active || voice.samplesLeft <= 0)
+                {
+                    voice.active = false;
+                    continue;
+                }
 
-                currentGrainReadPosition += currentGrainPitchRatio;
-                if (currentGrainReadPosition >= static_cast<float>(delayBufferSize))
-                    currentGrainReadPosition -= static_cast<float>(delayBufferSize);
+                const auto delayedMono = readMonoInterpolated(voice.readPosition);
+                const auto envelope = grainWindow(voice.samplesLeft, voice.totalSamples);
+                const auto grainWetMono = delayedMono * envelope * voice.amount;
+                const auto gainL = std::sqrt(0.5f * (1.0f - voice.pan));
+                const auto gainR = std::sqrt(0.5f * (1.0f + voice.pan));
+                wetSumL += grainWetMono * gainL;
+                wetSumR += grainWetMono * gainR;
+                feedbackAccumulator += delayedMono * voice.feedback * voice.amount;
+
+                --voice.samplesLeft;
+                if (voice.samplesLeft <= 0)
+                {
+                    voice.active = false;
+                    continue;
+                }
+
+                voice.readPosition += voice.pitchRatio;
+                while (voice.readPosition >= static_cast<float>(delayBufferSize))
+                    voice.readPosition -= static_cast<float>(delayBufferSize);
             }
 
-            if (grainPingPong)
-            {
-                const auto pan = grainPanToRight ? grainPingPongPan : -grainPingPongPan;
-                const auto gainL = std::sqrt(0.5f * (1.0f - pan));
-                const auto gainR = std::sqrt(0.5f * (1.0f + pan));
-                wetL = grainWetMono * gainL;
-                wetR = grainWetMono * gainR;
-            }
-            else
-            {
-                wetL = grainWetMono;
-                wetR = grainWetMono;
-            }
+            wetL = juce::jlimit(-2.0f, 2.0f, wetSumL);
+            wetR = juce::jlimit(-2.0f, 2.0f, wetSumR);
 
             constexpr auto smoothing = 0.12f;
             grainWetSmoothedL += smoothing * (wetL - grainWetSmoothedL);
@@ -590,9 +626,9 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
             wetL = grainWetSmoothedL;
             wetR = grainWetSmoothedR;
 
-            const auto monoIn = 0.5f * (inL + inR);
-            const auto fbScale = (0.25f + 0.75f * currentGrainAmount);
-            auto feedbackSignal = delayedMono * currentGrainFeedback * fbScale;
+            const auto monoIn = monoFromStereoPreservingSingleSide(inL, inR);
+            const auto fbScale = 0.25f + 0.75f * clamp01(grainAmount);
+            auto feedbackSignal = feedbackAccumulator * fbScale / static_cast<float>(maxGrainVoices);
             if (std::abs(feedbackSignal) < 1.0e-6f)
                 feedbackSignal = 0.0f;
 
@@ -679,7 +715,15 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
 
         if (duckingEnabled && duckingAmount > 0.0f)
         {
-            const auto detector = juce::jlimit(0.0f, 1.0f, std::max(std::abs(inL), std::abs(inR)));
+            const auto monoIn = monoFromStereoPreservingSingleSide(inL, inR);
+            const auto hpAlpha = juce::jlimit(0.0005f, 0.9995f, 1.0f - std::exp(-juce::MathConstants<float>::twoPi * duckingDetectorHpHz / static_cast<float>(currentSampleRate)));
+            duckDetectorHpState += hpAlpha * (monoIn - duckDetectorHpState);
+            const auto hpOut = monoIn - duckDetectorHpState;
+
+            const auto lpAlpha = juce::jlimit(0.0005f, 0.9995f, 1.0f - std::exp(-juce::MathConstants<float>::twoPi * duckingDetectorLpHz / static_cast<float>(currentSampleRate)));
+            duckDetectorLpState += lpAlpha * (hpOut - duckDetectorLpState);
+
+            const auto detector = juce::jlimit(0.0f, 1.0f, std::abs(duckDetectorLpState));
             const auto attackCoeff = std::exp(-1.0f / (duckingAttackMs * 0.001f * static_cast<float>(currentSampleRate)));
             const auto releaseCoeff = std::exp(-1.0f / (duckingReleaseMs * 0.001f * static_cast<float>(currentSampleRate)));
 
@@ -691,6 +735,15 @@ void PHASEUSDelayAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, 
             const auto duckGain = juce::jlimit(0.0f, 1.0f, 1.0f - duckingAmount * juce::jlimit(0.0f, 1.0f, duckEnvelope * 1.4f));
             wetProcL *= duckGain;
             wetProcR *= duckGain;
+        }
+
+        if (wetWidth != 1.0f)
+        {
+            const auto mid = 0.5f * (wetProcL + wetProcR);
+            auto side = 0.5f * (wetProcL - wetProcR);
+            side *= wetWidth;
+            wetProcL = mid + side;
+            wetProcR = mid - side;
         }
 
         if (loFiEnabled)
@@ -915,9 +968,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout PHASEUSDelayAudioProcessor::
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::duckingAmount, "Ducking Amount", 0.0f, 1.0f, 0.45f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::duckingAttackMs, "Ducking Attack", 1.0f, 150.0f, 16.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::duckingReleaseMs, "Ducking Release", 20.0f, 800.0f, 220.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        PhaseusDelayParams::duckingDetectorHpHz,
+        "Ducking Detector HP",
+        juce::NormalisableRange<float>(20.0f, 4000.0f, 0.01f, 0.35f),
+        120.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        PhaseusDelayParams::duckingDetectorLpHz,
+        "Ducking Detector LP",
+        juce::NormalisableRange<float>(200.0f, 20000.0f, 0.01f, 0.35f),
+        8000.0f));
     params.push_back(std::make_unique<juce::AudioParameterBool>(PhaseusDelayParams::diffusionEnable, "Diffusion Enable", false));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::diffusionAmount, "Diffusion Amount", 0.0f, 1.0f, 0.30f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::diffusionSizeMs, "Diffusion Size", 2.0f, 80.0f, 24.0f));
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::wetWidth, "Wet Width", 0.0f, 2.0f, 1.0f));
 
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::simpleTimeMs, "Simple Time", 1.0f, 2000.0f, 420.0f));
     params.push_back(std::make_unique<juce::AudioParameterFloat>(PhaseusDelayParams::simpleFeedback, "Simple Feedback", 0.0f, 0.97f, 0.35f));
